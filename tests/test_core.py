@@ -20,6 +20,9 @@ class Rules(unittest.TestCase):
         for site, expected in cases.items():
             self.assertEqual(state.map_category(site), expected, site)
         self.assertEqual(state.map_category("Mobile", {"mobile": "rev"}), "rev")
+        for site, name in (("KotH", "x"), ("King of the Hill", "x"), ("king_of_the_hill", "x"), ("Misc", "KOTH: Tetris")):
+            self.assertEqual(state.map_category(site, name=name), "koth", (site, name))
+        self.assertEqual(state.map_category("Misc", name="kothar"), "misc")
 
     def test_slug(self):
         self.assertEqual(state.slugify("Memory Corruption"), "Memory_Corruption")
@@ -36,6 +39,8 @@ class Rules(unittest.TestCase):
         chals = [ch(1, "hard", 1, 500), ch(2, "easy", 50, 100), ch(3, "mid", 50, 200), ch(4, "wanted", 0, 999)]
         ordered = sorted(chals, key=lambda c: state.queue_key(c, ["WANTED"]))
         self.assertEqual([c["name"] for c in ordered], ["wanted", "easy", "mid", "hard"])
+        hill = dict(ch(5, "hill", 0, 999), category="koth")  # KotH는 지정 우선순위보다도 앞
+        self.assertEqual(min(chals + [hill], key=lambda c: state.queue_key(c, ["WANTED"]))["name"], "hill")
 
 
 class Unpack(unittest.TestCase):

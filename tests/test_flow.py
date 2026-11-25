@@ -266,5 +266,77 @@ class Flow(unittest.TestCase):
         self.assertEqual(run_housekeep(3).get("nudges"), 0)
 
 
+    def test_koth(self):
+        """KotH: 분류, 최우선 spawn, 사이트 접근 위임, 모델 체인 자동 전환, 라운드에 따른 fast 조정."""
+        self.mock.add(9, "Hill Climb", "King of the Hill", value=1000, solves=0)
+        # 사용량 한도 문구를 띄우고 멈추는 더미 에이전트
+        with self.store.locked() as (cfg, st):
+            cfg.update(max_agents=1, idle_nudge=0, agent_cmd="sh -c 'echo \"You have hit your usage limit.\"; exec sleep 600' agent")
+        http, adapter = adapters.load(self.store)
+        with contextlib.redirect_stdout(io.StringIO()):
+            daemon.poll_once(self.store, http, adapter)  # housekeep 없이 수집과 spawn만
+        chals = self.store.state()["challenges"]
+        hill = chals["9"]
+        self.assertEqual((hill["category"], hill["dir"], hill["status"]), ("koth", "koth/Hill_Climb", "running"))
+        self.assertEqual((hill["agent"], hill["model"], hill["chain_idx"]), ("codex", "gpt-6.2-astra", 0))
+        self.assertEqual(chals["4"]["status"], "queued")  # --priority로 지정한 wanted보다 앞
+
+        chal = self.chal_dir("Hill Climb")
+        access = chal / "CTF_ACCESS.env"
+        self.assertEqual(access.stat().st_mode & 0o777, 0o600)
+        text = access.read_text()
+        self.assertIn(f"CTFD_TOKEN={TOKEN}", text)
+        self.assertIn("CHALLENGE_ID=9", text)
+        self.assertNotIn("DISCORD_WEBHOOK_URL", text)
+        self.assertIn("King of the Hill", (chal / "AGENTS.md").read_text())
+        self.assertIn("CTF_ACCESS.env", (chal / "AGENTS.md").read_text())
+        self.assertEqual((chal / "CLAUDE.md").read_text(), "@AGENTS.md\n")  # claude는 CLAUDE.md, codex는 AGENTS.md를 읽는다
+
+        def watch_until(pred, seconds=8):
+            end = time.time() + seconds
+            while time.time() < end:
+                with self.store.locked() as (cfg, st):  # 확인 간격을 기다리지 않게
+                    st["challenges"]["9"]["idle_checked"] = 0
+                daemon.housekeep(self.store)
+                if pred(self.store.state()["challenges"]["9"]):
+                    break
+                time.sleep(0.5)
+            return self.store.state()["challenges"]["9"]
+
+        hill = watch_until(lambda c: c.get("chain_idx") == 1)
+        self.assertEqual((hill["agent"], hill["model"]), ("claude", "claude-mythos-5-2"))
+        hill = watch_until(lambda c: c.get("chain_idx") == 2)
+        self.assertEqual(hill["model"], "claude-opus-5-5")
+        hill = watch_until(lambda c: c.get("fallback_exhausted"))
+        self.assertTrue(hill.get("fallback_exhausted"))
+        events = self.store.events_path.read_text()
+        self.assertEqual(events.count("MODEL_FALLBACK"), 2)
+        self.assertIn("MODEL_UNAVAILABLE", events)
+        self.assertEqual(hill["status"], "running")  # 슬롯은 유지
+
+        # fast: 라운드 3까지 켬, 이후 끔. 하단 표시를 흉내 내는 더미로 확인한다
+        self.run_cli("kill", "Hill Climb")
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'echo \"  GPT-6.2-Astra high · /x · Ready\"; exec sleep 600' agent"
+            st["challenges"]["9"].update(chain_idx=0, agent="codex", model="gpt-6.2-astra")
+        self.run_cli("spawn", "Hill Climb", "--now")
+        hill = watch_until(lambda c: c.get("fast_sent"))
+        self.assertIn("fast 켬", self.store.events_path.read_text())
+        self.assertIn("/fast", tmux.capture(hill["window_id"], 40))
+
+        self.run_cli("report", "round", "--round", "4", cwd=chal)
+        self.run_cli("kill", "Hill Climb")
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'echo \"  GPT-6.2-Astra high fast · /x · Ready\"; exec sleep 600' agent"
+            st["challenges"]["9"].update(chain_idx=0, agent="codex", model="gpt-6.2-astra", fast_sent=0)
+        self.run_cli("spawn", "Hill Climb", "--now")
+        watch_until(lambda c: c.get("fast_sent"))
+        self.assertIn("fast 끔 (라운드 4", self.store.events_path.read_text())
+
+        # Stop hook은 KotH용 문구로 차단한다
+        _, out = self.run_cli("hook", "stop", stdin=json.dumps({"cwd": str(chal)}))
+        self.assertIn("KotH", json.loads(out)["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

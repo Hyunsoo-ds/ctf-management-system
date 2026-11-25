@@ -1,5 +1,6 @@
 """ctfm CLI. 관리 세션이 쓰는 명령과 풀이 에이전트가 쓰는 report / hook 명령."""
 import argparse
+import copy
 import fcntl
 import json
 import shlex
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from . import adapters, daemon, intake, tmux
 from .notify import discord
-from .state import ACTIVE, CATEGORIES, CTFM_BIN, Store, find_root, label, queue_key, resolve, write_env
+from .state import ACTIVE, CATEGORIES, CTFM_BIN, KOTH_DEFAULTS, Store, find_root, label, queue_key, resolve, write_env
 
 RETRY_LIMIT = 3
 RETRY_CHECKLIST = """재검토 {n}/{limit} 기록됨. 지금 다음을 순서대로 수행하라.
@@ -24,6 +25,11 @@ STOP_REASON = """플래그를 아직 얻지 못했다. 이 작업은 플래그�
 - 가설이 없으면 AGENTS.md 8번(막혔을 때) 절차를 수행한다. 재검토를 3회 했다면 9번(insight 요청) 후 계속한다.
 - 토큰, 시도 횟수 제한, rate limit 때문에 사용자 확인이 필요한 경우에만 `ctfm report ask`로 질문하고 멈출 수 있다.
 - 플래그를 얻었다면 `ctfm report solved --flag '<flag>'`를 실행한다."""
+KOTH_STOP_REASON = """KotH는 대회가 끝날 때까지 점수를 올리는 문제라 끝이 없다. 지금 멈추지 말고 이어서 진행하라.
+- 현재 라운드를 확인해 바뀌었으면 `ctfm report round --round <번호>`로 보고한다.
+- 이번 라운드에 아직 제출하지 않았다면 마감 전에 검증된 최선의 후보를 먼저 제출한다(AGENTS.md 7.1).
+- 다음 라운드를 위한 개선을 계속한다. 아이디어가 없으면 AGENTS.md 6번 절차를 따른다.
+- 제출 절차가 없거나 제출 제한 때문에 사용자 확인이 필요하면 `ctfm report ask`로 질문하고 멈출 수 있다."""
 
 
 def store_here():
@@ -69,8 +75,8 @@ def cmd_init(a):
         cfg.update(update)
         for key, default in (("start", 0), ("max_agents", 8), ("priority", []), ("agent", "claude"),
                              ("model", "claude-opus-5"), ("codex_model", "gpt-5.6-sol"), ("poll_interval", 30),
-                             ("idle_nudge", 120), ("category_map", {})):
-            cfg.setdefault(key, default)
+                             ("idle_nudge", 120), ("category_map", {}), ("koth", KOTH_DEFAULTS)):
+            cfg.setdefault(key, copy.deepcopy(default))
     env = dict(e.split("=", 1) for e in a.env)
     if a.token:
         env["CTFD_TOKEN"] = a.token
@@ -157,7 +163,9 @@ def cmd_status(a):
         for c in sorted(rows, key=lambda c: c["seq"]):
             extra = []
             if c.get("agent"):
-                extra.append(c["agent"])
+                extra.append(f"{c['agent']} {c['model']}" if c.get("model") else c["agent"])
+            if c.get("round"):
+                extra.append(f"라운드 {c['round']}")
             if c["status"] in ACTIVE:
                 extra.append(f"{int((time.time() - c['spawned_at']) / 60)}분 경과")
                 extra.append(f"재검토 {c['retries']}/{RETRY_LIMIT}")
@@ -186,6 +194,11 @@ def cmd_spawn(a):
             raise SystemExit(f"{label(ch)} 는 {ch['agent']}로 풀던 문제라 {a.agent}로 이어 갈 수 없음 (--resume 없이 새로 시작)")
         if a.agent:
             ch["agent"] = a.agent
+            ch.pop("model", None)
+        if a.model:
+            ch["model"] = a.model
+        if (a.agent or a.model) and ch["category"] == "koth":
+            ch["chain_idx"] = -1  # 사용자가 직접 고른 모델: 자동 전환과 fast 조정을 하지 않는다
         if a.now:
             daemon.spawn(store, cfg, ch, resume=a.resume)
         else:
@@ -303,6 +316,10 @@ def cmd_report(a):
             message = (f"🧱 **{name}** 막힘, insight 요청 ({ch['blocked_count']}회째). 에이전트는 계속 풀이 중\n"
                        f"tmux `{ch.get('tmux_session')}:{ch['slug']}`\n\n{blocked.read_text().strip()}")
             print("알림 전송됨. 재검토 횟수가 0으로 초기화됐다. 멈추지 말고 남은 아이디어부터 다음 재검토 사이클을 시작하라.")
+        elif a.kind == "round":
+            ch["round"] = a.round
+            store.emit("ROUND", f"{label(ch)} 라운드 {a.round}", echo=False)
+            print(f"라운드 {a.round} 기록됨. 라운드가 바뀔 때마다 다시 보고하라.")
         elif a.kind == "ask":
             ch["status"] = "waiting_user"
             store.emit("ASK", f"{label(ch)} 질문 대기: {a.question}", echo=False)
@@ -329,7 +346,8 @@ def cmd_hook(a):
                 ch["status"] = "running"  # 질문에 한해 1회만 멈춤 허용
                 tmux.mark(ch)
             elif ch["status"] in ("running", "blocked"):
-                print(json.dumps({"decision": "block", "reason": STOP_REASON}, ensure_ascii=False))
+                reason = KOTH_STOP_REASON if ch["category"] == "koth" else STOP_REASON
+                print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
     except Exception as e:
         print(f"ctfm hook 오류: {e}", file=sys.stderr)
 
@@ -360,6 +378,7 @@ def main(argv=None):
     s.add_argument("--now", action="store_true", help="슬롯 한도를 무시하고 즉시 시작")
     s.add_argument("--resume", action="store_true", help="이전 대화를 이어서 시작 (claude --continue / codex resume --last)")
     s.add_argument("--agent", choices=daemon.AGENTS, help="이 문제를 풀 에이전트 (기본은 설정값)")
+    s.add_argument("--model", help="이 문제에만 쓸 모델 (KotH는 자동 모델 전환을 끔)")
     s.set_defaults(fn=cmd_spawn)
 
     s = sub.add_parser("kill", help="풀이 세션 종료 (슬롯 반환)")
@@ -403,6 +422,8 @@ def main(argv=None):
     r = rsub.add_parser("solved")
     r.add_argument("--flag", required=True)
     rsub.add_parser("retry")
+    r = rsub.add_parser("round", help="[KotH] 현재 라운드 보고")
+    r.add_argument("--round", type=int, required=True)
     rsub.add_parser("blocked")
     r = rsub.add_parser("ask")
     r.add_argument("--question", required=True)

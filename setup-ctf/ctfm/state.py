@@ -12,8 +12,15 @@ REPO_DIR = SKILL_DIR.parent
 CTFM_BIN = SKILL_DIR / "bin" / "ctfm"
 TEMPLATES = SKILL_DIR / "templates"
 
-CATEGORIES = ("pwn", "web", "rev", "crypto", "ai", "misc")
+CATEGORIES = ("koth", "pwn", "web", "rev", "crypto", "ai", "misc")
 ACTIVE = ("running", "blocked", "waiting_user")  # 슬롯을 점유하는 상태
+KOTH_PATTERN = re.compile(r"\bkoth\b|king[\s_-]*of[\s_-]*the[\s_-]*hill", re.I)
+# KotH 기본 모델 체인. 막히면(사용량 한도, 안전 차단) 다음 항목으로 넘어간다. fast_rounds: 이 라운드까지 /fast 켬
+KOTH_DEFAULTS = {"chain": [
+    {"agent": "codex", "model": "gpt-6.2-astra", "fast_rounds": 3},
+    {"agent": "claude", "model": "claude-mythos-5-2"},
+    {"agent": "claude", "model": "claude-opus-5-5"},
+]}
 
 _CATEGORY_RULES = (
     ("misc", r"blockchain|web3|smart contract"),
@@ -25,10 +32,12 @@ _CATEGORY_RULES = (
 )
 
 
-def map_category(site_category, overrides=None):
+def map_category(site_category, overrides=None, name=""):
     key = (site_category or "").strip().lower()
     if overrides and key in overrides:
         return overrides[key]
+    if KOTH_PATTERN.search(key) or KOTH_PATTERN.search(name or ""):  # King of the Hill은 분야와 무관하게 별도 유형
+        return "koth"
     for cat, pattern in _CATEGORY_RULES:
         if re.search(pattern, key):
             return cat
@@ -55,8 +64,9 @@ def priority_index(ch, priority):
 
 
 def queue_key(ch, priority):
-    """지정 우선순위 → solve 수 많은 순 → 배점 낮은 순 → 발견 순."""
-    return (priority_index(ch, priority), -int(ch.get("solves") or 0), int(ch.get("points") or 0), ch["seq"])
+    """KotH(초반 점수 확보가 핵심) → 지정 우선순위 → solve 수 많은 순 → 배점 낮은 순 → 발견 순."""
+    return (ch.get("category") != "koth", priority_index(ch, priority), -int(ch.get("solves") or 0),
+            int(ch.get("points") or 0), ch["seq"])
 
 
 def resolve(challenges, token):

@@ -301,6 +301,12 @@ download(cfg, file, dest)
   - **유휴 재개**: Stop hook 대신 데몬이 15초마다 화면을 확인한다. 하단에 작업 중 표시(`esc to interrupt`)가 없고 화면이 `idle_nudge`초(기본 120) 동안 그대로면 `ctfm send`와 같은 방식으로 계속 진행 메시지를 넣고 `NUDGED` 이벤트를 남긴다. claude에도 적용되고, `waiting_user`와 사용자가 보고 있는 윈도우는 건너뛴다. `ctfm set idle-nudge 0`이면 끈다.
   - codex의 셸 명령은 공유 app-server 환경에서 실행돼 실행 스크립트의 `PATH`가 전달되지 않는다. AGENTS.md는 `ctfm` 전체 경로를 쓰게 한다.
   - `[?]` 공유 app-server 모드에서는 명령을 공식 codex 0.172 app-server가 실행하므로, insane 패치가 실제 풀이에 적용되는지 불확실하다.
+- **King of the Hill** (2026-11-25): 사이트 카테고리나 문제 이름이 `koth`/`king of the hill`이면 `koth` 유형(7번째 분야, `koth/`, tmux `<ctf>-koth`). 대기 순서 최우선(슬롯 공유).
+  - 모델 체인 `koth.chain`(config): `codex gpt-6.2-astra`(fast_rounds 3) → `claude claude-mythos-5-2` → `claude claude-opus-5-5`. 데몬이 15초마다 화면을 보고, 작업 중이 아닐 때 마지막 8줄에 사용량 한도나 안전 차단 문구가 있으면 다음 항목으로 다시 띄운다(같은 에이전트면 resume). `[?]` 실제 한도/차단 화면 문구는 일부만 확인했고 정규식은 추정이다.
+  - fast: codex TUI의 `/fast`는 토글이고 작업 중에도 즉시 적용된다(`Service tier set to priority/default`, 하단 표시에 `fast`). 데몬이 하단 표시를 읽어 원하는 상태(보고된 라운드 ≤ fast_rounds)와 다르면 키 입력으로 `/fast`를 넣는다. `-c service_tier=...`는 내장 모드를 강제해서 쓸 수 없다.
+  - 사이트 접근 위임: 사용자 결정으로 KotH 에이전트는 사이트에 직접 접근해 라운드를 확인한다(이후 제출까지 자동화 예정). 문제 디렉토리에 `CTF_ACCESS.env`(CTF .env에서 Discord webhook을 뺀 값 + CTF_URL, CHALLENGE_ID, 권한 600). 제출 절차는 `templates/KOTH_STRATEGY.md`가 비어 있는 동안 ask로 묻는다.
+  - `ctfm report round --round N`, `ctfm spawn --model`(KotH에 쓰면 자동 전환과 fast 조정을 끔), KotH용 Stop hook/유휴 재개 문구.
+  - 모델 전환 때 이전 셸이 늦게 쓰는 종료 표식과 섞이지 않게 종료 표식 파일을 실행마다 새로 만든다.
 - **이벤트 구독은 `command grep`** (`/setup-ctf` E2E 후): Claude Code 셸의 `grep`은 내장 ugrep으로 바뀌는데, `--line-buffered`를 줘도 마지막 한 줄을 다음 줄이 올 때까지 내보내지 않는다. 그래서 뒤따르는 이벤트가 없는 ASK가 관리 세션에 4분 넘게 전달되지 않았다.
 
 ## 12. 테스트

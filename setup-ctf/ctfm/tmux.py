@@ -65,6 +65,13 @@ def send_text(window_id, text):
     tmux("send-keys", "-t", window_id, "Enter")
 
 
+def type_command(window_id, text):
+    """슬래시 명령처럼 붙여넣기가 아니라 키 입력으로 넣어야 하는 짧은 텍스트."""
+    tmux("send-keys", "-t", window_id, "-l", text)
+    time.sleep(0.5)
+    tmux("send-keys", "-t", window_id, "Enter")
+
+
 def being_viewed(window_id):
     """사용자가 이 윈도우를 화면에 띄워 보고 있는지 (세션에 붙어 있고 이 윈도우가 활성)."""
     out = tmux("display-message", "-p", "-t", window_id, "#{session_attached}:#{window_active}", check=False).strip()

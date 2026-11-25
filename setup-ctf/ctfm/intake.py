@@ -8,12 +8,13 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .state import CTFM_BIN, TEMPLATES
+from .state import CTFM_BIN, TEMPLATES, load_env
 
 # 배포본에 들어 있으면 에이전트 설정을 바꿔 버리는 이름들. 어느 깊이에 있든 `.dist`를 붙인다.
 RESERVED = {"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".claude", ".mcp.json", ".codex", ".agents"}  # .agents/skills는 codex가 cwd에서 읽는다
 # 우리가 문제 디렉토리 최상위에 만드는 파일들
-OWN = {"CHALLENGE.md", "STATE.md", "BLOCKED.md"}
+OWN = {"CHALLENGE.md", "STATE.md", "BLOCKED.md", "CTF_ACCESS.env"}
+ACCESS_FILE = "CTF_ACCESS.env"  # KotH 문제에만 만든다: 사이트 주소와 인증 정보 위임
 TAR_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")
 NOTES_BEGIN, NOTES_END = "<!-- CTF_NOTES:BEGIN -->", "<!-- CTF_NOTES:END -->"
 
@@ -103,12 +104,29 @@ def notes_text(root):
     return path.read_text().strip() if path.is_file() and path.read_text().strip() else "(아직 기록된 내용 없음)"
 
 
+def koth_strategy():
+    text = (TEMPLATES / "KOTH_STRATEGY.md").read_text().strip()
+    return text or "(아직 정해진 전략 없음)"
+
+
 def write_agents(root, ch):
     chal_dir = root / ch["dir"]
-    (chal_dir / "AGENTS.md").write_text(render("AGENTS.md", {
+    koth = ch["category"] == "koth"
+    (chal_dir / "AGENTS.md").write_text(render("AGENTS_KOTH.md" if koth else "AGENTS.md", {
         "name": ch["name"], "category": ch["category"], "ctfm": CTFM_BIN,
         "notes": f"{NOTES_BEGIN}\n{notes_text(root)}\n{NOTES_END}",
+        **({"strategy": koth_strategy(), "access": ACCESS_FILE} if koth else {}),
     }))
+
+
+def write_access(store, ch):
+    """KotH 에이전트는 라운드 확인과 제출을 위해 사이트에 직접 접근한다. Discord webhook은 넘기지 않는다."""
+    env = {k: v for k, v in load_env(store.root).items() if k != "DISCORD_WEBHOOK_URL"}
+    env.update(CTF_URL=store.config()["base_url"], CHALLENGE_ID=ch["id"])
+    path = store.root / ch["dir"] / ACCESS_FILE
+    path.touch(mode=0o600)
+    path.chmod(0o600)
+    path.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
 
 
 def intake(store, http, adapter, ch):
@@ -147,6 +165,8 @@ def intake(store, http, adapter, ch):
         "renamed": bullets([f"`{r}`" for r in renamed]),
     }))
     write_agents(store.root, ch)
+    if ch["category"] == "koth":
+        write_access(store, ch)
     (chal_dir / "CLAUDE.md").write_text("@AGENTS.md\n")
     (chal_dir / ".claude").mkdir()
     hook = {"type": "command", "command": f"{CTFM_BIN} hook stop", "timeout": 30}

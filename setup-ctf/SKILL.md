@@ -18,8 +18,8 @@ disable-model-invocation: true
 
 ## 지켜야 할 것
 
-- **플래그를 사이트에 제출하지 않는다.** 너도, 풀이 에이전트도 하지 않는다. 제출은 사용자가 한다. 힌트 해제처럼 사이트 상태를 바꾸는 요청도 보내지 않는다. 어댑터는 GET만 쓴다.
-- **인증 정보는 `<CTF>/.env`에만 둔다.** 토큰이나 쿠키를 문제 디렉토리의 파일, 풀이 에이전트에게 보내는 메시지, Discord 알림에 넣지 않는다.
+- **플래그를 사이트에 제출하지 않는다.** 너도, 풀이 에이전트도 하지 않는다. 제출은 사용자가 한다. 힌트 해제처럼 사이트 상태를 바꾸는 요청도 보내지 않는다. 어댑터는 GET만 쓴다. 예외는 KotH 문제뿐이다(4절): KotH 에이전트는 위임받은 접근 권한으로 그 문제의 라운드를 조회하고, 정해진 제출 절차가 있을 때만 제출한다.
+- **인증 정보는 `<CTF>/.env`에만 둔다.** 토큰이나 쿠키를 문제 디렉토리의 파일, 풀이 에이전트에게 보내는 메시지, Discord 알림에 넣지 않는다. 예외는 `ctfm`이 KotH 문제 디렉토리에 만드는 `CTF_ACCESS.env`뿐이다.
 - **풀이 에이전트는 포기하지 않는다.** 플래그 없이 멈추려 하면 Stop hook이 되돌린다. 막힘 알림(`BLOCKED`)은 사용자가 insight를 줄 기회이고, 에이전트는 그 뒤에도 계속 푼다. 에이전트에게 "그만해도 된다"는 취지의 메시지를 보내지 않는다. 세션을 끝내는 것은 사용자가 지시했을 때의 `ctfm kill`뿐이다.
 
 ## 1. 셋업 (호출 즉시)
@@ -43,17 +43,17 @@ disable-model-invocation: true
 7. 데몬 기동: `ctfm up`. 시작 시간 전이면 데몬이 기다렸다가 시작 10초 전부터 5초 간격으로 조회하고, 문제가 보이면 30초 간격으로 바꾼다.
 8. 이벤트 구독: Monitor 도구를 `timeout_ms: 1800000`(최대 30분)으로 걸고, 만료 알림이 오면 다시 건다.
    ```
-   tail -n 0 -F .ctfm/events.log | command grep --line-buffered -v -E '\] (RETRY|NEW|NUDGED) '
+   tail -n 0 -F .ctfm/events.log | command grep --line-buffered -v -E '\] (RETRY|NEW|NUDGED|ROUND) '
    ```
    `command grep`을 그대로 쓴다. Claude Code 셸의 `grep`은 내장 ugrep으로 바뀌어 있는데, 이것은 마지막 한 줄을 다음 줄이 올 때까지 내보내지 않아 질문 같은 이벤트가 전달되지 않는다.
-   `NEW`, `RETRY`, `NUDGED`는 양이 많고 네가 할 일이 없어 걸러 낸다(`NEW`는 곧이어 오는 `SPAWNED`로 알 수 있고, 재개 횟수는 `ctfm status`에 나온다). 재구독 사이에 놓친 줄은 `ctfm events --since <마지막으로 본 줄 수>`로 따라잡는다(출력 끝의 `LINES=`가 현재 줄 수다).
+   `NEW`, `RETRY`, `NUDGED`, `ROUND`는 양이 많고 네가 할 일이 없어 걸러 낸다(`NEW`는 곧이어 오는 `SPAWNED`로 알 수 있고, 재개 횟수와 KotH 라운드는 `ctfm status`에 나온다). 재구독 사이에 놓친 줄은 `ctfm events --since <마지막으로 본 줄 수>`로 따라잡는다(출력 끝의 `LINES=`가 현재 줄 수다).
 9. 사용자에게 셋업 결과를 짧게 보고한다: 로그인 계정/팀, 시작 시간, 한도, 에이전트와 모델, 그리고 **풀이를 직접 보는 방법**.
 
 ## 사용자가 풀이를 직접 보는 방법
 
 풀이 에이전트는 사용자의 기본 tmux 서버에 뜬 일반 세션에서 대화형 claude 또는 codex로 돌고 있다. 사용자는 언제든 붙어서 진행 상황을 그대로 보고 직접 입력할 수 있어야 한다. 셋업 보고와 `BLOCKED`/`ASK` 전달 때 접속 명령을 함께 알려 준다.
 
-- 분야별 세션: `tmux attach -t <ctf>-pwn` (`-web`, `-rev`, `-crypto`, `-ai`, `-misc`). 문제 하나가 윈도우 하나이고 윈도우 이름이 문제 이름이다.
+- 분야별 세션: `tmux attach -t <ctf>-pwn` (`-web`, `-rev`, `-crypto`, `-ai`, `-misc`, `-koth`). 문제 하나가 윈도우 하나이고 윈도우 이름이 문제 이름이다.
 - 윈도우 이름 앞 표시: `✔` 플래그 획득, `!` 막힘 알림을 보냄(풀이는 계속 중), `?` 사용자 답을 기다림.
 - 전체를 한 화면에서 고르기: tmux 안에서 `prefix + w`(choose-tree).
 - 데몬 로그: `tmux attach -t <ctf>-ctl`.
@@ -72,6 +72,9 @@ disable-model-invocation: true
 | `SITE_SOLVED` | 실행 중인 문제가 사이트에서 풀림으로 표시됨 | 알리기만 한다. 사용자가 끝내라고 하면 `ctfm kill` |
 | `EXITED` | 에이전트 프로세스나 윈도우가 사라짐 (슬롯 반환됨) | `ctfm peek`으로 원인 확인 후 `ctfm spawn <문제> --now --resume` 여부를 사용자에게 제안 |
 | `NUDGED` (구독에서 걸러짐) | 플래그 없이 입력 대기로 멈춘 에이전트에 데몬이 계속 진행 메시지를 넣음 | 할 일 없음. `ctfm status`의 "유휴 재개" 횟수가 빠르게 늘면 `ctfm peek`으로 왜 멈추는지 보고 사용자에게 알린다 |
+| `MODEL_FALLBACK` | KotH 에이전트의 모델이 사용량 한도나 안전 차단으로 막혀 다음 모델로 다시 띄움 | 전달 (어느 모델에서 어느 모델로, 이유) |
+| `MODEL_UNAVAILABLE` | KotH 모델 체인을 다 써서 더 넘어갈 모델이 없음 | 바로 전달. `ctfm peek`으로 화면을 확인하고 사용자와 대책을 정한다 |
+| `FAST` | KotH codex 에이전트의 fast를 켜거나 끔 (라운드 기준) | 한 줄 전달 |
 | `TRUST_PROMPT` | 에이전트가 신뢰 대화상자에서 멈춤 | `ctfm peek`으로 확인 후 사용자에게 알린다 |
 | `POLL_ERROR` | 문제 목록 조회 실패 | 시작 전의 403은 정상. 401이나 로그인 리다이렉트면 토큰 만료이므로 사용자에게 새 값을 받아 `ctfm init --token <새 토큰>` 실행(준 값만 바뀐다). 어댑터 문제면 `.ctfm/adapter.py`를 고친다(데몬이 다음 폴링에 바로 반영한다) |
 | `FETCH_ERROR` | 한 문제의 다운로드/압축 해제 실패 (폴링마다 재시도) | 원인을 보고 고친다. "이미 존재함"이면 그 디렉토리를 어떻게 할지 사용자에게 묻는다 |
@@ -98,7 +101,18 @@ disable-model-invocation: true
 
 문제 이름은 ID, 디렉토리 이름, 이름의 일부로 지정할 수 있다. 여러 개가 걸리면 `ctfm`이 후보를 보여 준다.
 
-## 4. 이 대회의 특징을 기억한다
+## 4. King of the Hill (KotH) 문제
+
+사이트 카테고리나 문제 이름에 `KotH`/`King of the Hill`이 들어가면 `koth` 유형으로 분류된다(`koth/<문제>/`, tmux `<ctf>-koth`). 사이트 카테고리 이름이 다르면 `ctfm set category-map '<사이트 카테고리>=koth'`로 지정한다. jeopardy와 다른 점:
+
+- **대기 순서 맨 앞**: 초반 라운드 점수 확보가 핵심이라 `--priority` 문제보다도 먼저 슬롯을 받는다(슬롯은 공유).
+- **모델 체인**: 기본 `codex gpt-6.2-astra` → `claude claude-mythos-5-2` → `claude claude-opus-5-5`. 화면에 사용량 한도나 안전 차단 문구가 보이면 데몬이 다음 모델로 다시 띄운다(`MODEL_FALLBACK`). claude끼리 넘어갈 때는 대화를 이어 가고, codex에서 claude로 넘어갈 때는 새로 시작한다(STATE.md는 남는다). 체인은 `.ctfm/config.json`의 `koth.chain`이다.
+- **fast**: Astra는 라운드 3까지 `/fast`를 켜고, 라운드 4부터 끈다. 라운드는 에이전트가 사이트에서 확인해 `ctfm report round`로 보고하고, 데몬이 codex 하단 표시를 보고 `/fast`를 입력해 맞춘다. 라운드 보고가 아직 없으면 켠 상태로 둔다.
+- **사이트 접근 위임**: KotH 문제 디렉토리에는 `CTF_ACCESS.env`(사이트 주소, 인증 정보, 문제 ID, 권한 600. Discord webhook은 넣지 않음)가 생기고, 에이전트는 이 문제의 라운드, 점수판, 공지를 직접 조회할 수 있다. 제출은 `templates/KOTH_STRATEGY.md`(AGENTS.md 7번)를 따른다: 매 라운드 반드시 제출하고, 라운드 1~3은 간단하지만 확실한 규칙 기반 후보로 점수부터 확보한다. 제출 방법이 불확실하거나 제출 제한·감점이 있으면 에이전트가 `ASK`로 묻는다.
+- **규칙**: `AGENTS.md`는 KotH용 템플릿(`templates/AGENTS_KOTH.md`)으로 만든다. Stop hook과 유휴 재개 메시지도 "대회 끝까지 개선을 계속하라"는 KotH용 문구를 쓴다.
+- 사용자가 "이 KotH는 Mythos로 바꿔"라고 하면 `ctfm kill X` 후 `ctfm spawn X --now --agent claude --model claude-mythos-5-2`. 직접 고른 모델에는 자동 전환과 fast 조정을 하지 않는다.
+
+## 5. 이 대회의 특징을 기억한다
 
 진행하면서 알게 된, 다른 문제에도 적용되는 사실을 `CTF_NOTES.md`에 누적한다. 예: 실제 플래그 형식, 원격 인스턴스가 5분 뒤 꺼진다는 것, 모든 문제에 PoW가 붙는다는 것, 운영진 공지. 적은 뒤:
 

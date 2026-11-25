@@ -15,15 +15,17 @@
 |---|---|
 | 🔐 **로그인 확인** | 호출 즉시 토큰으로 로그인되는지 검사하고, 대회 시작 시각까지 기다립니다 |
 | 🛰️ **자동 수집** | 30초마다 문제 사이트를 폴링해 새 문제의 설명과 첨부 파일을 받고 압축을 풉니다 |
-| 🪟 **병렬 풀이** | 분야별 tmux 세션(`pwn` `web` `rev` `crypto` `ai` `misc`)에 문제당 윈도우 하나씩 에이전트를 띄웁니다 |
+| 🪟 **병렬 풀이** | 분야별 tmux 세션(`pwn` `web` `rev` `crypto` `ai` `misc` `koth`)에 문제당 윈도우 하나씩 에이전트를 띄웁니다 |
 | 🎯 **우선순위** | 지정한 문제 → solve 많은 순 → 배점 낮은 순으로 슬롯(`--max-agents`)을 채웁니다 |
 | 🚩 **알림** | 플래그 획득, 막힘(insight 요청), 질문을 Discord webhook으로 보냅니다 |
 | 🧱 **포기 없음** | 막히면 재검토 3회 → 사용자에게 막힌 지점 설명 → 계속 풀이. 플래그 없이 끝나지 않습니다 |
 | 🧭 **관리 세션** | 스킬을 호출한 세션이 관리자가 되어 "X 끝내", "Y 먼저", "Z한테 이거 전해" 같은 지시를 처리합니다 |
 | 🤖 **에이전트 선택** | 풀이 에이전트로 Claude Code 또는 Codex(`insane-codex`)를 문제별로 고를 수 있습니다 |
+| 👑 **King of the Hill** | KotH 문제를 자동 분류해 고급 모델(Astra 6.2 fast → Mythos 5.2 → Opus 5.5)로 최우선 배정합니다 |
 
 > [!IMPORTANT]
-> **플래그는 절대 자동 제출하지 않습니다.** 사이트 어댑터는 GET만 쓰고, 에이전트는 사이트에 접근하지 않습니다.
+> **플래그는 절대 자동 제출하지 않습니다.** 사이트 어댑터는 GET만 쓰고, jeopardy 에이전트는 사이트에 접근하지 않습니다.
+> (KotH 에이전트만 해당 문제의 라운드 조회와 정해진 제출 절차를 위해 접근 권한을 위임받습니다.)
 > 토큰이 필요하거나 시도 횟수/rate limit이 있는 공격은 실행 전에 사용자에게 먼저 묻습니다.
 
 <br>
@@ -63,7 +65,9 @@ setup-ctf/                  ← ~/.claude/skills/setup-ctf 가 이 폴더를 가
 │   ├── adapters/             ctfd.py (GET 전용), base.py
 │   ├── state.py  tmux.py  notify.py
 └── templates/
-    ├── AGENTS.md             풀이 에이전트 규칙
+    ├── AGENTS.md             풀이 에이전트 규칙 (jeopardy)
+    ├── AGENTS_KOTH.md        KotH 에이전트 규칙
+    ├── KOTH_STRATEGY.md      KotH 전략·제출 절차 (AGENTS_KOTH.md 7번에 삽입)
     ├── CHALLENGE.md          문제 설명 템플릿
     └── adapter_skeleton.py   CTFd가 아닌 사이트용 어댑터 뼈대
 tests/                      mock CTFd + 격리된 tmux 서버 기반 테스트
@@ -182,7 +186,7 @@ CTFd가 아닌 사이트라면 관리 세션이 사이트를 분석해 즉석에
 ### 풀이 지켜보기
 
 ```bash
-tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc
+tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 ```
 
 - 윈도우 하나가 문제 하나입니다. 이름 앞 표시: `✔` 플래그 획득 · `!` 막힘 알림 보냄(계속 풀이 중) · `?` 답을 기다림
@@ -212,6 +216,18 @@ tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc
 3. **문제 사이트에 접근하지 않습니다.** 제출 · 힌트 해제 · API 호출 모두 금지.
 4. **먼저 물어볼 것**: 토큰/계정 필요, 시도 횟수 제한, rate limit · 대량 요청, 잠긴 힌트, 원격 서버 다운.
 5. **막히면** `ctfm report retry` → 문제를 처음부터 다시 읽기 → 풀이 논리 재검증 → 놓친 공격 표면 점검. 3회 후에도 진전이 없으면 배경지식 없는 사람도 이해할 수 있게 `BLOCKED.md`를 쓰고 알림. **그리고 계속 풉니다.**
+
+### 👑 King of the Hill
+
+사이트 카테고리나 문제 이름에 `KotH` / `King of the Hill`이 있으면 `koth` 유형으로 분류되어 다르게 다룹니다.
+
+| | |
+|---|---|
+| 대기 순서 | 모든 문제보다 먼저 (초반 라운드 점수 확보가 핵심) |
+| 모델 체인 | `gpt-6.2-astra`(codex) → `claude-mythos-5-2` → `claude-opus-5-5`. 사용량 한도나 안전 차단이 보이면 자동으로 다음 모델로 전환 |
+| fast | Astra는 라운드 3까지 `/fast` 켬, 라운드 4부터 끔 (에이전트가 보고한 라운드 기준) |
+| 사이트 접근 | 문제 디렉토리의 `CTF_ACCESS.env`(권한 600)로 그 문제의 라운드·점수판 조회 위임 |
+| 제출 | 매 라운드 반드시 제출. 라운드 1~3은 간단하지만 확실한 규칙 기반 후보로 점수부터 확보 ([`KOTH_STRATEGY.md`](setup-ctf/templates/KOTH_STRATEGY.md)) |
 
 ### Claude vs Codex
 

@@ -4,7 +4,7 @@
 - 배점: {{points}} / solve 수: {{solves}} (수집 시점 기준)
 - 접속 정보: {{connection_info}}
 - 태그: {{tags}}
-- 제출 시도 제한: {{max_attempts}} (제출은 사용자가 직접 한다)
+- 제출 시도 제한: {{max_attempts}} (누가 제출하는지는 AGENTS.md를 따른다)
 
 ## 설명
 
