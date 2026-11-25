@@ -1,0 +1,270 @@
+"""mock CTFd + 격리된 tmux 서버로 수집 → 스케줄링 → 보고 → Stop hook 흐름을 검증한다. 에이전트는 sleep 더미."""
+import contextlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup-ctf"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ctfm import adapters, cli, daemon, state, tmux  # noqa: E402
+from mock_ctfd import TOKEN, MockCTFd, make_zip  # noqa: E402
+
+SOCKET = f"ctfm-test-{os.getpid()}"
+
+
+@unittest.skipUnless(shutil.which("tmux"), "tmux 필요")
+class Flow(unittest.TestCase):
+    def setUp(self):
+        os.environ.update(CTFM_TMUX_SOCKET=SOCKET, SHELL="/bin/sh")
+        self.mock = MockCTFd()
+        self.url = self.mock.start()
+        self.root = Path(tempfile.mkdtemp()) / "TESTCTF"
+        self.root.mkdir()
+        self.old_cwd = os.getcwd()
+        os.chdir(self.root)
+        self.mock.add(1, "hard one", "Pwnable", value=500, solves=1, connection_info="nc 127.0.0.1 31337",
+                      files={"hard.zip": make_zip({"hard/chall": (b"\x7fELF", 0o755), "hard/CLAUDE.md": (b"evil", 0o644)})},
+                      description="heap 문제", max_attempts=5)
+        self.mock.add(2, "easy one", "Pwnable", value=100, solves=50)
+        self.mock.add(3, "mid web", "Web Exploitation", value=200, solves=20)
+        self.mock.add(4, "wanted", "Cryptography", value=999, solves=0)
+        self.mock.add(5, "done", "Misc", value=10, solves=99, solved=True)
+        self.run_cli("init", "--url", self.url + "/challenges", "--token", TOKEN, "--max-agents", "2", "--priority", "wanted")
+        state.write_env(self.root, {"DISCORD_WEBHOOK_URL": self.url + "/webhook"})
+        self.store = state.Store(self.root)
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'sleep 600' agent"
+
+    def tearDown(self):
+        os.chdir(self.old_cwd)
+        subprocess.run(["tmux", "-L", SOCKET, "kill-server"], capture_output=True)
+        self.mock.stop()
+        shutil.rmtree(self.root.parent, ignore_errors=True)
+
+    def run_cli(self, *argv, cwd=None, stdin=None):
+        out = io.StringIO()
+        old = os.getcwd()
+        os.chdir(cwd or old)
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(stdin or "")
+        try:
+            with contextlib.redirect_stdout(out):
+                code = cli.main(list(argv))
+        finally:
+            sys.stdin = old_stdin
+            os.chdir(old)
+        return code, out.getvalue()
+
+    def poll(self):
+        http, adapter = adapters.load(self.store)
+        with contextlib.redirect_stdout(io.StringIO()):
+            count = daemon.poll_once(self.store, http, adapter)
+            daemon.housekeep(self.store)
+            daemon.schedule(self.store)
+        return count
+
+    def status(self):
+        return {c["name"]: c["status"] for c in self.store.state()["challenges"].values()}
+
+    def chal_dir(self, name):
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == name)
+        return self.root / ch["dir"]
+
+    def windows(self):
+        out = subprocess.run(["tmux", "-L", SOCKET, "list-windows", "-a", "-F", "#{session_name}:#{window_name}"],
+                             capture_output=True, text=True).stdout
+        return sorted(out.split())
+
+    def test_check(self):
+        code, out = self.run_cli("check")
+        result = json.loads(out)
+        self.assertEqual((code, result["login_ok"], result["user"], result["challenges_visible"]), (0, True, "tester", 5))
+        state.write_env(self.root, {"CTFD_TOKEN": "wrong"})
+        code, out = self.run_cli("check")
+        self.assertEqual((code, json.loads(out)["login_ok"]), (1, False))
+
+    def test_not_started_then_full_flow(self):
+        self.mock.started = False
+        http, adapter = adapters.load(self.store)
+        with self.assertRaises(Exception):
+            daemon.poll_once(self.store, http, adapter)
+        self.mock.started = True
+
+        self.assertEqual(self.poll(), 5)
+        # 우선순위 지정(wanted) → solve 수 많은 순(easy one). 이미 풀린 문제는 건너뜀.
+        self.assertEqual(self.status(), {"hard one": "queued", "easy one": "running", "mid web": "queued",
+                                         "wanted": "running", "done": "site_solved"})
+        self.assertEqual(self.windows(), ["TESTCTF-crypto:wanted", "TESTCTF-pwn:easy_one"])
+
+        # 디렉토리 구조와 생성 파일
+        hard = self.chal_dir("hard one")
+        self.assertEqual(hard, self.root / "pwn" / "hard_one")
+        self.assertTrue(os.access(hard / "chall", os.X_OK))
+        self.assertEqual((hard / "CLAUDE.md").read_text(), "@AGENTS.md\n")
+        self.assertEqual((hard / "CLAUDE.md.dist").read_bytes(), b"evil")
+        challenge_md = (hard / "CHALLENGE.md").read_text()
+        for expected in ("nc 127.0.0.1 31337", "heap 문제", "5회", "무료 힌트", "CLAUDE.md.dist", "Pwnable"):
+            self.assertIn(expected, challenge_md)
+        self.assertNotIn("token=secret", challenge_md)
+        self.assertIn("포기는 없다", (hard / "AGENTS.md").read_text())
+        hook = json.loads((hard / ".claude" / "settings.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+        self.assertTrue(hook.endswith("bin/ctfm hook stop"))
+        self.assertFalse(list(self.root.rglob(".env.*")) or (hard / ".env").exists())
+        self.assertFalse((self.root / "misc" / "done").exists())
+
+        # 폴링 중 새 문제: 슬롯이 가득이라 큐에만 들어감
+        self.mock.add(6, "late ai", "AI", value=50, solves=80)
+        self.poll()
+        self.assertEqual(self.status()["late ai"], "queued")
+
+        # Stop hook: 플래그 없이 멈추려 하면 차단
+        easy = self.chal_dir("easy one")
+        hook_in = json.dumps({"cwd": str(easy), "hook_event_name": "Stop", "stop_hook_active": False})
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(json.loads(out)["decision"], "block")
+
+        # 재검토 3회 → 4번째는 blocked 안내, BLOCKED.md 없이는 blocked 불가
+        for n in (1, 2, 3):
+            _, out = self.run_cli("report", "retry", cwd=easy)
+            self.assertIn(f"재검토 {n}/3", out)
+        _, out = self.run_cli("report", "retry", cwd=easy)
+        self.assertIn("ctfm report blocked", out)
+        with self.assertRaises(SystemExit):
+            self.run_cli("report", "blocked", cwd=easy)
+        (easy / "BLOCKED.md").write_text("## 막힌 지점\nlibc leak이 안 됨\n" + "상세 설명 " * 600)
+        _, out = self.run_cli("report", "blocked", cwd=easy / ".claude")  # 하위 디렉토리에서 호출해도 문제를 찾는다
+        self.assertIn("멈추지 말고", out)
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+        self.assertEqual((ch["status"], ch["retries"], ch["blocked_count"]), ("blocked", 0, 1))
+        blocked_msgs = [m for m in self.mock.webhook if "insight 요청" in m or "상세 설명" in m]
+        self.assertGreater(len(blocked_msgs), 1)  # 2000자 초과분은 나눠서 전송
+        self.assertTrue(all(len(m) <= 2000 for m in self.mock.webhook))
+        self.assertIn("libc leak이 안 됨", "".join(self.mock.webhook))
+        # blocked는 끝이 아님: 슬롯 유지, 멈춤은 계속 차단
+        self.poll()
+        self.assertEqual(self.status()["late ai"], "queued")
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(json.loads(out)["decision"], "block")
+
+        # ask: 1회만 멈춤 허용
+        self.run_cli("report", "ask", "--question", "팀 토큰이 필요함", cwd=easy)
+        self.assertEqual(self.status()["easy one"], "waiting_user")
+        self.assertIn("팀 토큰이 필요함", self.mock.webhook[-1])
+        self.assertIn("TESTCTF-pwn:?easy_one", self.windows())  # 윈도우 이름에 상태 표시
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(out, "")
+        self.assertIn("TESTCTF-pwn:easy_one", self.windows())
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(json.loads(out)["decision"], "block")
+
+        # solved: 알림, 멈춤 허용, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn
+        self.run_cli("report", "solved", "--flag", "flag{real}", cwd=easy)
+        self.assertIn("flag{real}", self.mock.webhook[-1])
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(out, "")
+        self.poll()
+        self.assertEqual(self.status()["late ai"], "running")
+        self.assertIn("TESTCTF-ai:late_ai", self.windows())
+        self.assertIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀린 문제의 윈도우는 표시만 붙이고 남겨 둔다
+
+        # 사이트에서 풀림 표시: 실행 중이면 알림만, 대기 중이면 큐에서 제외
+        self.mock.challenges[4]["solved_by_me"] = True
+        self.mock.challenges[1]["solved_by_me"] = True
+        self.poll()
+        self.assertEqual((self.status()["wanted"], self.status()["hard one"]), ("running", "site_solved"))
+        self.assertIn("SITE_SOLVED crypto/wanted", self.store.events_path.read_text())
+
+        # kill: 윈도우 종료, 슬롯 반환 → 다음(mid web) spawn
+        self.run_cli("kill", "wanted")
+        self.poll()
+        self.assertEqual((self.status()["wanted"], self.status()["mid web"]), ("killed", "running"))
+        self.assertNotIn("TESTCTF-crypto:wanted", self.windows())
+
+        # 한도를 넘는 즉시 시작, 메시지 주입
+        self.run_cli("spawn", "wanted", "--now", "--resume")
+        self.assertEqual(self.status()["wanted"], "running")
+        self.assertEqual(sum(s in state.ACTIVE for s in self.status().values()), 3)
+        self.run_cli("send", "wanted", "힌트: 첫 줄\n둘째 줄")
+
+        # 문제 사이트에는 쓰기 요청이 한 번도 가지 않는다
+        self.assertEqual(self.mock.writes, [])
+
+    def test_exit_detection_and_prioritize(self):
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'exit 3' agent"
+            cfg["max_agents"] = 1
+        self.poll()  # wanted가 먼저 뜨고 곧바로 종료된다
+        deadline = time.time() + 10
+        while time.time() < deadline and any(s in state.ACTIVE for s in self.status().values()):
+            time.sleep(0.3)
+            with contextlib.redirect_stdout(io.StringIO()):
+                daemon.housekeep(self.store)
+        self.assertEqual(self.status()["wanted"], "exited")
+        self.assertIn("EXITED crypto/wanted", self.store.events_path.read_text())
+        self.assertEqual(self.status()["hard one"], "queued")  # solve 수가 가장 적어 대기 순서 맨 뒤
+        self.run_cli("prioritize", "hard")
+        self.assertEqual(self.store.config()["priority"], ["hard one", "wanted"])
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'sleep 600' agent"
+        self.poll()
+        self.assertEqual(self.status()["hard one"], "running")
+
+    def test_existing_directory_is_not_overwritten(self):
+        mine = self.root / "pwn" / "easy_one"
+        mine.mkdir(parents=True)
+        (mine / "my_work.py").write_text("keep")
+        self.poll()
+        self.assertEqual(self.status()["easy one"], "fetch_error")
+        self.assertEqual((mine / "my_work.py").read_text(), "keep")
+
+    def test_notes_sync(self):
+        self.poll()
+        (self.root / "CTF_NOTES.md").write_text("플래그 포맷: TEST{...}\n")
+        self.run_cli("notes-sync")
+        agents = (self.chal_dir("easy one") / "AGENTS.md").read_text()
+        self.assertIn("플래그 포맷: TEST{...}", agents)
+        self.assertNotIn("아직 기록된 내용 없음", agents)
+        self.run_cli("notes-sync")  # 두 번 해도 구간이 망가지지 않는다
+        self.assertEqual((self.chal_dir("easy one") / "AGENTS.md").read_text(), agents)
+
+    def test_idle_nudge(self):
+        """입력 대기로 멈춘 에이전트만 재개시키고, 작업 중이거나 질문 대기면 건드리지 않는다."""
+        with self.store.locked() as (cfg, st):
+            cfg.update(idle_nudge=1, max_agents=1, agent_cmd="sh -c 'echo ready; exec sleep 600' agent")
+        self.poll()
+        ch_id = next(i for i, c in self.store.state()["challenges"].items() if c["name"] == "wanted")
+
+        def run_housekeep(seconds):
+            end = time.time() + seconds
+            while time.time() < end:
+                daemon.housekeep(self.store)
+                time.sleep(0.3)
+            return self.store.state()["challenges"][ch_id]
+
+        ch = run_housekeep(4)
+        self.assertGreaterEqual(ch.get("nudges", 0), 1)
+        self.assertIn("NUDGED", self.store.events_path.read_text())
+        self.assertIn("플래그를 아직", tmux.capture(ch["window_id"], 40).replace("\n", ""))
+
+        with self.store.locked() as (cfg, st):  # 질문 대기 중이면 건드리지 않는다
+            st["challenges"][ch_id].update(status="waiting_user", nudges=0)
+        self.assertEqual(run_housekeep(3).get("nudges"), 0)
+
+        self.run_cli("kill", "wanted")  # 작업 중 표시가 있으면 화면이 멈춰 있어도 건드리지 않는다
+        with self.store.locked() as (cfg, st):
+            cfg["agent_cmd"] = "sh -c 'echo \"Working (esc to interrupt)\"; exec sleep 600' agent"
+            st["challenges"][ch_id]["nudges"] = 0
+        self.run_cli("spawn", "wanted", "--now")
+        self.assertEqual(run_housekeep(3).get("nudges"), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

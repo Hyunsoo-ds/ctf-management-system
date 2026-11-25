@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+# -I: 문제 디렉토리(신뢰할 수 없는 파일)에서 실행돼도 cwd나 사용자 site-packages의 모듈을 불러오지 않는다.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ctfm.cli import main  # noqa: E402
+
+sys.exit(main())

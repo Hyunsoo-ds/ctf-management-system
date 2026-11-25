@@ -1,0 +1,5 @@
+# 인증 정보 (Discord webhook 등)
+.env
+
+__pycache__/
+*.pyc
