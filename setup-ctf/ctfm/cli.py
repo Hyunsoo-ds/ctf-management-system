@@ -290,7 +290,7 @@ def cmd_send(a):
             if ch["status"] not in ACTIVE:
                 raise SystemExit(f"{label(ch)} 는 실행 중이 아님 ({ch['status']})")
             for p in live_panes(ch, a.agent):
-                tmux.send_text(p["pane"], a.message)
+                daemon.tell(p, a.message)
             if ch["status"] == "waiting_user":  # 답을 받았다. claude는 prompt hook도 바꾸지만, hook이 없는 codex는 여기서 바꾼다
                 ch["status"] = "running"
                 tmux.mark(ch)

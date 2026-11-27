@@ -437,6 +437,19 @@ class Flow(unittest.TestCase):
         self.assertIn("ESCALATED pwn/easy_one[codex]", self.store.events_path.read_text())
         self.assertIn("codex gpt-6-sol max", self.run_cli("status")[1])
 
+        # `ctfm send`와 유휴 재개도 멈춘 codex 목표를 먼저 잇는다. claude에는 넣지 않는다
+        resumes = lambda p: tmux.capture(p["pane"], 60).replace("\n", "").count("/goal resume")
+        before = resumes(ch["peer"])
+        self.run_cli("send", "easy one", "힌트다")
+        self.assertEqual((resumes(ch["peer"]), resumes(ch)), (before + 1, 1))  # 1은 가짜 에이전트가 찍은 하단 표시
+        with self.store.locked() as (cfg, st):
+            cfg["idle_nudge"] = 1
+        deadline = time.time() + 15
+        while time.time() < deadline and "NUDGED pwn/easy_one[codex]" not in self.store.events_path.read_text():
+            daemon.housekeep(self.store)
+            time.sleep(0.3)
+        self.assertGreaterEqual(resumes(ch["peer"]), before + 2)
+
     def test_dual_exit(self):
         """동시 풀이는 한쪽이 끝나도 슬롯을 유지하고, 둘 다 끝나야 exited가 된다."""
         with self.store.locked() as (cfg, st):

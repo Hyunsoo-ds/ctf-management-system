@@ -140,7 +140,7 @@ disable-model-invocation: true
 **effort 상향 (KotH를 뺀 모든 문제, claude와 codex 모두)**: claude는 `xhigh`, codex는 `medium`으로 시작한다. 막힘 보고(`ctfm report retry`)가 기준이고, 동시 풀이에서는 pane마다 따로 센다.
 
 1. 1번째 막힘: 재검토 체크리스트.
-2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 멈추면(목표가 남아 있어 도구 없는 짧은 턴이 몇 번 이어진 뒤 일시 정지된다, 20초 안팎) 데몬이 effort를 max로 올리고(claude는 `/effort max`, codex는 `/model` 메뉴) `/compact`를 입력한 뒤, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). codex가 멈추면서 목표를 세워 뒀으면 지시 앞에 `/goal resume`을 넣는다. 이후 그 pane은 resume해도 max로 뜨고, `ctfm set codex-effort`를 바꿔도 max로 남는다.
+2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 멈추면(목표가 남아 있어 도구 없는 짧은 턴이 몇 번 이어진 뒤 일시 정지된다, 20초 안팎) 데몬이 effort를 max로 올리고(claude는 `/effort max`, codex는 `/model` 메뉴) `/compact`를 입력한 뒤, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). codex가 멈추면서 목표를 세워 뒀으면(하단 `Goal paused (/goal resume)`) 지시 앞에 `/goal resume`을 넣는다. `ctfm send`와 유휴 재개도 같다. 직접 손으로 입력할 때는 `/goal resume`을 먼저 넣어야 codex가 한 턴에서 멈추지 않는다. 이후 그 pane은 resume해도 max로 뜨고, `ctfm set codex-effort`를 바꿔도 max로 남는다.
 3. 3번째 막힘: `BLOCKED.md` 작성 → Discord 알림(`BLOCKED`) → 계속 풀이. 횟수가 초기화되고, 이미 max인 다음 사이클에서는 재검토 2회 → 알림만 반복한다.
 
 codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).

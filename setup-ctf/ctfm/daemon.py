@@ -268,6 +268,15 @@ def koth_fallback(store, cfg, ch, p, reason):
     store.emit("MODEL_FALLBACK", f"{pane_label(ch, p)} {prev['model']} 사용 불가({reason}) → {nxt['model']}로 다시 띄움")
 
 
+def tell(p, text):
+    """에이전트 pane에 메시지를 넣는다. claude의 멈춘 목표는 메시지가 오면 다시 이어지지만, codex가 스스로 세워 둔 목표는
+    메시지만으로는 한 턴만 하고 다시 멈춘다. 그래서 codex는 목표부터 다시 잇고 메시지를 넣는다."""
+    if p["agent"] == "codex" and GOAL_STOPPED.search(tmux.capture(p["pane"], 15)):
+        tmux.type_command(p["pane"], "/goal resume")
+        time.sleep(1)
+    tmux.send_text(p["pane"], text)
+
+
 def menu_moves(screen, header, item):
     """codex 선택 메뉴 화면에서 커서(›)를 item 항목까지 옮길 칸 수(아래가 +). header가 제목인 메뉴가 떠 있지 않으면 None."""
     if header not in screen:
@@ -337,7 +346,7 @@ def sync_codex(store, cfg, ch, p, screen, now):
                 store.emit("EFFORT_ERROR", f"{pane_label(ch, p)} codex effort를 {effort}로 바꾸지 못함 (/model 메뉴를 읽지 못함). 현재 {match.group(1)}")
 
 
-def escalate(store, ch, p, busy, screen):
+def escalate(store, ch, p, busy):
     """재검토 2회째(claude와 codex 모두): 턴이 끝나면 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 지시한다.
     pending → (유휴) ready → (계속 유휴면 effort max, /compact 입력) compacting → (compact 끝) 지시 전송."""
     codex = p["agent"] == "codex"
@@ -355,10 +364,7 @@ def escalate(store, ch, p, busy, screen):
         tmux.type_command(p["pane"], "/compact")
         p.update(escalate="compacting", effort="max")
     else:
-        if codex and GOAL_STOPPED.search(screen):  # 멈추면서 목표를 세워 둔 codex는 지시만 넣으면 한 턴만 하고 다시 멈춘다
-            tmux.type_command(p["pane"], "/goal resume")
-            time.sleep(1)
-        tmux.send_text(p["pane"], RIGOROUS_PROMPT)
+        tell(p, RIGOROUS_PROMPT)
         del p["escalate"]
         store.emit("ESCALATED", f"{pane_label(ch, p)} 재검토 2회째: effort max로 올리고 compact한 뒤 엄밀한 재검토를 지시함")
 
@@ -386,7 +392,7 @@ def watch(store, cfg, ch, p, now):
             store.emit("SUCCESSOR", f"{label(ch)} 라운드 {ch['round']}: 후임 {describe(cfg, ch, ch['peer'])}를 오른쪽 pane에 띄워 인수 준비 시작")
     sync_codex(store, cfg, ch, p, screen, now)
     if p.get("escalate"):
-        escalate(store, ch, p, busy, screen)
+        escalate(store, ch, p, busy)
         return
     if p.get("role") == "successor" and p.get("ready"):  # 준비를 마치고 전환을 기다리며 멈춰 있는 것이 정상이다
         return
@@ -396,7 +402,7 @@ def watch(store, cfg, ch, p, now):
         return
     if not limit or now - p.get("idle_since", now) < limit or tmux.being_viewed(ch["window_id"]):
         return
-    tmux.send_text(p["pane"], NUDGE_MESSAGE_KOTH if ch["category"] == "koth" else NUDGE_MESSAGE)
+    tell(p, NUDGE_MESSAGE_KOTH if ch["category"] == "koth" else NUDGE_MESSAGE)
     p.update(idle_since=now, nudges=p.get("nudges", 0) + 1)
     store.emit("NUDGED", f"{pane_label(ch, p)} {limit}초 넘게 입력 대기 상태라 계속 진행 메시지를 보냄 ({p['nudges']}회째)")
 

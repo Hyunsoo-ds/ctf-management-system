@@ -351,9 +351,8 @@ download(cfg, file, dest)
 - **codex effort 상향** (2026-11-27, 사용자 결정: claude와 codex가 같게 동작): 2회째 `report retry`의 상향 대상에서 에이전트 조건을 뺐다(KotH 제외, 아직 max가 아닐 때는 그대로). 상태 흐름(pending → ready → compacting)과 안내문, 재검토 지시는 claude와 같고 입력만 다르다. effort는 `/effort max` 대신 `set_codex_effort(pane, "max")`(`/model` 메뉴, 이 세션만)로 올리고, `/compact`는 codex에도 있다.
   - pane에 `effort=max`가 기록된다. `settings()`가 codex도 pane의 effort를 설정 `codex_effort`보다 먼저 보도록 바꿨다. 그래서 `sync_codex`가 medium으로 되돌리지 않고, resume 뒤에도 max로 다시 맞추며, 메뉴 조작이 실패했을 때도 다시 시도한다. KotH의 codex는 체인 항목에 effort가 있을 때만 맞춘다(기본 체인에는 없어 동작이 그대로다).
   - 확인한 동작 (insane-codex 0.170, 격리된 tmux): 멈추라는 안내를 받은 codex는 도구 없는 짧은 턴을 두세 번 거친 뒤 목표를 세워 두고 멈춘다(하단 `Goal paused (/goal resume)`, 목표를 blocked로 기록한 경우에는 `Goal stalled (/goal resume)`). 그 상태에서 effort max 전환(`Model changed to gpt-6-sol max for this session only`, config 불변), `/compact`(약 10초 동안 `esc to interrupt` 표시, `Context compacted`)가 됐다. compact 뒤에도 목표는 멈춘 채 남는다.
-  - claude와 다른 점: 멈춘 목표는 메시지를 넣어도 다시 이어지지 않는다. 한 턴만 하고 멈춘다(확인). `/goal resume`을 넣으면 `Goal active`가 되고 이어서 넣은 지시를 수행한 뒤 계속 이어 간다(확인). 그래서 하단에 `(/goal resume)` 표시가 있을 때만 재검토 지시 앞에 `/goal resume`을 넣는다.
+  - claude와 다른 점: 멈춘 목표는 메시지를 넣어도 다시 이어지지 않는다. 한 턴만 하고 멈춘다(확인). `/goal resume`을 넣으면 `Goal active`가 되고 이어서 넣은 지시를 수행한 뒤 계속 이어 간다(확인). 그래서 하단에 `(/goal resume)` 표시가 있을 때만 메시지 앞에 `/goal resume`을 넣는다(`daemon.tell`). 재검토 지시, 유휴 재개(`NUDGED`), `ctfm send`(질문 답변 전달 포함)가 모두 이 경로를 쓴다. 플래그를 얻었으니 멈추라는 상대 pane 안내에는 넣지 않는다.
   - `[?]` 목표가 이어지는 동안 턴과 턴 사이에 작업 중 표시가 1초쯤 사라진다. 3초 간격의 두 번 연속 유휴 판정이 그 틈에 걸리면 작업 중에 `/compact`를 넣게 된다. 턴 길이가 4초 이상이라 가능성은 낮다고 추정하지만 긴 실행으로 확인하지는 않았다.
-  - `[?]` 유휴 재개(NUDGED)와 `ask` 답변 전달도 멈춘 codex 목표에는 한 턴씩만 진행시킨다. 이번 변경은 effort 상향 경로만 다룬다.
 
 ## 12. 테스트
 
