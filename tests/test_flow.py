@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup-ctf"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ctfm import adapters, cli, daemon, state, tmux  # noqa: E402
-from mock_ctfd import TOKEN, MockCTFd, make_zip  # noqa: E402
+from mock_ctfd import BOT_TOKEN, TOKEN, MockCTFd, make_zip  # noqa: E402
 
 SOCKET = f"ctfm-test-{os.getpid()}"
 
@@ -357,20 +357,26 @@ class Flow(unittest.TestCase):
         self.assertIn("강제 종료", self.store.events_path.read_text())
 
     def test_forum_tags(self):
-        """포럼 포스트를 만들 때 분야 태그를 붙인다. 태그가 필수인 포럼에서 태그 설정이 없으면 원인을 남긴다."""
-        self.mock.require_tag = True
+        """봇 토큰이 있으면 포럼의 태그 목록을 읽어 포스트를 만들 때 분야 태그를 붙인다. 없거나 조회에 실패해도 알림은 간다."""
+        self.mock.tags = {"pwn": "111", "Crypto": "222", "misc": "333"}
         self.poll()
         easy, wanted = self.chal_dir("easy one"), self.chal_dir("wanted")
-        self.run_cli("report", "ask", "--question", "태그 없이", cwd=wanted)
-        self.assertEqual(self.mock.threads, {})
-        self.assertIn("A tag is required", self.store.events_path.read_text())
+        tags = lambda: {t["name"]: t.get("tags") for t in self.mock.threads.values()}
+        self.run_cli("notify", "토큰 없음")
+        self.assertEqual(tags(), {"TESTCTF": None})
 
-        state.write_env(self.root, {"DISCORD_FORUM_TAGS": "pwn:111, crypto:222,misc:333"})
+        state.write_env(self.root, {"DISCORD_API": self.url + "/discord", "DISCORD_BOT_TOKEN": "wrong"})
         self.run_cli("report", "ask", "--question", "토큰 필요", cwd=wanted)
+        self.assertEqual(tags()["[crypto] wanted"], None)  # 조회 실패: 태그 없이 만들고 원인을 남긴다
+        self.assertIn("포럼 태그 조회 실패", self.store.events_path.read_text())
+
+        state.write_env(self.root, {"DISCORD_BOT_TOKEN": BOT_TOKEN})
+        self.mock.threads.clear()  # 포스트가 지워졌으면 다시 만든다. 이번에는 태그가 붙는다
+        self.run_cli("report", "ask", "--question", "다시", cwd=wanted)
+        self.assertEqual(tags(), {"[crypto] wanted": ["222"]})  # 태그 이름은 대소문자를 가리지 않는다
+        del self.mock.tags["pwn"]
         self.run_cli("report", "ask", "--question", "원격 다운", cwd=easy)
-        self.run_cli("notify", "공지")
-        self.assertEqual({t["name"]: t["tags"] for t in self.mock.threads.values()},
-                         {"[crypto] wanted": ["222"], "[pwn] easy one": ["111"], "TESTCTF": ["333"]})
+        self.assertEqual(tags()["[pwn] easy one"], ["333"])  # 분야 태그가 없으면 misc
 
     def test_effort_escalation(self):
         """재검토 2회째: claude가 멈춰 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""

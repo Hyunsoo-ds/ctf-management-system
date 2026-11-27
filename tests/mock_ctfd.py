@@ -11,6 +11,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = "testtoken"
+BOT_TOKEN, CHANNEL = "bottoken", "555"  # Discord 봇 토큰과 포럼 채널 ID
 
 
 def make_zip(files):
@@ -41,7 +42,7 @@ class MockCTFd:
         self.started = True
         self.webhook = []     # Discord로 전송된 content 목록
         self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"} (+ 태그를 붙여 만들었으면 "tags")
-        self.require_tag = False  # 포럼 설정 "태그 필수"를 흉내 낸다
+        self.tags = {}        # 포럼의 태그: 이름 -> ID. 봇 토큰(BOT_TOKEN)으로만 읽을 수 있다
         self.writes = []      # webhook과 플래그 제출 외의 쓰기 요청 (있으면 안 됨)
         self.pages = {}       # 인증 없이 보여 줄 HTML 페이지: 경로 -> bytes (리허설용 화면)
         self.attempts = []    # 플래그 제출: (challenge_id, flag). 정답은 문제의 flag (기본 flag{real})
@@ -75,6 +76,12 @@ class MockCTFd:
                     return self.reply(200, mock.challenges[int(cid)]["files"][name], "application/octet-stream")
                 if path in mock.pages:
                     return self.reply(200, mock.pages[path], "text/html; charset=utf-8")
+                if path == "/webhook":  # webhook 조회: 채널 ID까지만 준다
+                    return self.reply(200, {"channel_id": CHANNEL})
+                if path == f"/discord/channels/{CHANNEL}":
+                    if self.headers.get("Authorization") != f"Bot {BOT_TOKEN}":
+                        return self.reply(401, {"message": "401: Unauthorized", "code": 0})
+                    return self.reply(200, {"available_tags": [{"id": i, "name": n} for n, i in mock.tags.items()]})
                 if self.headers.get("Authorization") != f"Token {TOKEN}":
                     return self.reply(401, {"message": "unauthorized"})
                 if path == "/api/v1/users/me":
@@ -99,7 +106,7 @@ class MockCTFd:
                     data = json.loads(body)
                     thread = query.partition("thread_id=")[2] or None
                     if thread is None and data.get("thread_name"):
-                        if mock.require_tag and not data.get("applied_tags"):
+                        if set(data.get("applied_tags", [])) - set(mock.tags.values()):  # 없는 태그 ID: 실제 Discord의 응답 그대로
                             return self.reply(400, {"message": "A tag is required to create a forum post in this channel", "code": 40067})
                         thread = str(1000 + len(mock.threads))
                         mock.threads[thread] = {"name": data["thread_name"], "messages": []}
