@@ -217,7 +217,12 @@ class Flow(unittest.TestCase):
         self.poll()
         self.assertEqual(self.status()["late ai"], "running")
         self.assertIn("TESTCTF-ai:late_ai", self.windows())
-        self.assertIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀린 문제의 윈도우는 표시만 붙이고 남겨 둔다
+        self.assertIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀이 정리를 쓸 시간을 준 뒤에 닫는다
+        with self.store.locked() as (cfg, st):
+            st["challenges"][ch["id"]]["solved_at"] = time.time() - 60
+        self.poll()
+        self.assertNotIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀린 문제는 세션을 끝내고 윈도우를 지운다
+        self.assertIn("CLOSED pwn/easy_one", self.store.events_path.read_text())
 
         # 사이트에서 풀림 표시: 실행 중이면 알림만, 대기 중이면 큐에서 제외
         self.mock.challenges[4]["solved_by_me"] = True

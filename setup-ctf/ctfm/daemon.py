@@ -368,11 +368,26 @@ def watch(store, cfg, ch, p, now):
     store.emit("NUDGED", f"{pane_label(ch, p)} {limit}초 넘게 입력 대기 상태라 계속 진행 메시지를 보냄 ({p['nudges']}회째)")
 
 
+def close_solved(store, cfg, ch):
+    """플래그를 얻은 문제의 세션을 정리한다: 풀이 정리를 마칠 시간을 준 뒤 /exit로 끝내고 윈도우를 지운다."""
+    now = time.time()
+    since = ch.setdefault("solved_at", now)
+    busy = any(BUSY_PATTERN.search(tmux.capture(p["pane"], 15)) for p in panes(ch) if not p.get("exited"))
+    if now - since < 10 or (busy and now - since < 90):  # WRITEUP.md를 쓰는 중이면 최대 90초까지 기다린다
+        return
+    clean = all([stop_agent(cfg, p) for p in panes(ch)])
+    tmux.kill_window(ch["window_id"])
+    ch["closed"] = True
+    store.emit("CLOSED", f"{label(ch)} 풀린 문제의 세션을 종료하고 윈도우를 지움{'' if clean else FORCED}")
+
+
 def housekeep(store):
     """종료된 에이전트, 신뢰 대화상자, 멈춘 에이전트, KotH 모델 상태를 감지한다."""
     with store.locked() as (cfg, st):
         alive = tmux.alive_windows()
         for ch in st["challenges"].values():
+            if ch["status"] == "solved" and not ch.get("closed") and ch.get("window_id") in alive:
+                close_solved(store, cfg, ch)
             if ch["status"] not in ACTIVE:
                 continue
             if ch.get("window_id") not in alive:

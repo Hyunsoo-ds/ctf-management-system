@@ -55,7 +55,7 @@ disable-model-invocation: true
 풀이 에이전트는 사용자의 기본 tmux 서버에 뜬 일반 세션에서 대화형 claude 또는 codex로 돌고 있다. 사용자는 언제든 붙어서 진행 상황을 그대로 보고 직접 입력할 수 있어야 한다. 셋업 보고와 `BLOCKED`/`ASK` 전달 때 접속 명령을 함께 알려 준다.
 
 - 분야별 세션: `tmux attach -t <ctf>-pwn` (`-web`, `-rev`, `-crypto`, `-ai`, `-misc`, `-koth`). 문제 하나가 윈도우 하나이고 윈도우 이름이 문제 이름이다. pwn과 rev 윈도우는 pane이 둘이다(왼쪽 codex, 오른쪽 claude).
-- 윈도우 이름 앞 표시: `✔` 플래그 획득, `!` 막힘 알림을 보냄(풀이는 계속 중), `?` 사용자 답을 기다림.
+- 윈도우 이름 앞 표시: `✔` 플래그 획득(풀이 정리 후 곧 윈도우가 지워진다), `!` 막힘 알림을 보냄(풀이는 계속 중), `?` 사용자 답을 기다림.
 - 전체를 한 화면에서 고르기: tmux 안에서 `prefix + w`(choose-tree).
 - 데몬 로그: `tmux attach -t <ctf>-ctl`.
 - 사용자가 윈도우에 직접 입력하거나 Esc로 끊는 것은 Stop hook에 막히지 않는다.
@@ -67,7 +67,7 @@ disable-model-invocation: true
 | 이벤트 | 의미 | 할 일 |
 |---|---|---|
 | `NEW`, `SPAWNED`, `SKIPPED` | 문제 수집, 에이전트 시작, 이미 풀린 문제 제외 | 여러 건이면 묶어서 전달 |
-| `SOLVED` | 에이전트가 플래그 획득 (Discord 전송됨) | 플래그와 함께 전달. 자동 제출이 허용돼 있으면(4절) 바로 `ctfm submit X`, 아니면 사용자가 제출한다 |
+| `SOLVED` | 에이전트가 플래그 획득 (Discord 전송됨). 곧 데몬이 그 세션을 `/exit`로 끝내고 윈도우를 지운다(`CLOSED`). 풀이 요약은 문제 디렉토리의 `WRITEUP.md`에 남는다 | 플래그와 함께 전달. 자동 제출이 허용돼 있으면(4절) 바로 `ctfm submit X`, 아니면 사용자가 제출한다 |
 | `ESCALATED` | claude 에이전트가 2번째로 막혀 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 시작함 | 한 줄 전달 |
 | `BLOCKED` | 3번째 막힘(재검토 2회 후에도 진전 없음), insight 요청 (Discord 전송됨). 에이전트는 계속 진행 중 | 전달. 사용자가 힌트를 주면 `ctfm send`로 전달 |
 | `ASK` | 에이전트가 사용자 답을 기다림: 토큰/시도 제한, 원격 다운, 또는 Linux CLI로 풀기 어려운 문제(VM 이미지 침해 사고 분석 등) | 바로 전달. 답은 `ctfm send`로 전달하거나 사용자가 그 윈도우에 직접 입력 |
@@ -77,6 +77,7 @@ disable-model-invocation: true
 | `SUCCESSOR` | KotH 라운드 3: 후임(Mythos 5.2 high)을 오른쪽 pane에 띄워 인수 준비 시작 | 한 줄 전달 |
 | `READY` | KotH 후임이 인수 준비를 마침 (Discord 전송됨) | 6절의 메인 전환 절차 2~4번을 수행한다 |
 | `HANDOVER` | KotH 메인 전환 완료, 이전 메인 세션 종료 | 한 줄 전달 |
+| `CLOSED` | 풀린 문제의 세션을 종료하고 윈도우를 지움 | 할 일 없음. 다시 보려면 `ctfm spawn X --now --resume` |
 | `SUBMITTED` | `ctfm submit`의 결과 (Discord 전송됨) | `correct`/`already_solved`면 한 줄 전달. 그 외는 4절의 오답 처리 |
 | `MODEL_FALLBACK` | KotH 에이전트의 모델이 사용량 한도나 안전 차단으로 막혀 다음 모델로 다시 띄움 | 전달 (어느 모델에서 어느 모델로, 이유) |
 | `MODEL_UNAVAILABLE` | KotH 모델 체인을 다 써서 더 넘어갈 모델이 없음 | 바로 전달. `ctfm peek`으로 화면을 확인하고 사용자와 대책을 정한다 |

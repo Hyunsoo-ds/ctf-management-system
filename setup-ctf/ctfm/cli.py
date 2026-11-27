@@ -373,13 +373,14 @@ def cmd_report(a):
         who = pane_label(ch, p)
         name = f"[{ch['category']}] {ch['name']}" + (f" ({p['agent']})" if ch.get("peer") else "")
         if a.kind == "solved":
-            ch.update(status="solved", flag=a.flag)
+            ch.update(status="solved", flag=a.flag, solved_at=time.time())
             store.emit("SOLVED", f"{who} flag={a.flag}", echo=False)
             message = f"🚩 **{name}** 플래그 획득\n`{a.flag}`"
             for other in live_panes(ch):
                 if other is not p:  # 동시 풀이의 상대는 더 풀 이유가 없다
                     tmux.send_text(other["pane"], f"{p['agent']} 세션이 이 문제의 플래그를 얻었다. 이 문제는 끝났다. 지금 하던 작업을 멈추고 턴을 끝내라.")
-            print("기록됨 (Discord 알림 전송). 플래그 획득 경로를 채팅에 요약하라. 사이트 제출은 네가 하지 않는다.")
+            print("기록됨 (Discord 알림 전송). 지금 플래그 획득 경로를 WRITEUP.md에 짧게 적고 턴을 끝내라. "
+                  "이 세션은 곧 자동으로 종료된다. 사이트 제출은 네가 하지 않는다.")
         elif a.kind == "retry":
             if p["retries"] >= RETRY_LIMIT:
                 print(f"이미 재검토를 {RETRY_LIMIT}회 했다. 이제 AGENTS.md 9번 절차를 수행하라: "
