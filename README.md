@@ -254,6 +254,14 @@ python3 -m unittest discover -s tests       # 단위 + 흐름 테스트
 python3 tests/mock_ctfd.py --port 8765      # 수동 실험용 mock CTFd (토큰: testtoken)
 ```
 
+실제 에이전트로 전체 흐름을 리허설하려면 가상 CTF를 띄웁니다. 분야별 jeopardy 문제 6개(pwn · rev · web · crypto · ai · misc)와 pwn/web 원격 서비스가 함께 뜹니다.
+
+```bash
+python3 rehearsal/serve.py                  # 문제 사이트 :8000, pwn 원격 :31337, web 원격 :8081
+# 다른 터미널에서: mkdir ~/ctf/REHEARSAL && cd ~/ctf/REHEARSAL && claude
+#   /setup-ctf http://127.0.0.1:8000 --token testtoken
+```
+
 <br>
 
 ## ⚠️ 알려진 한계

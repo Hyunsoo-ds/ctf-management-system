@@ -3,3 +3,6 @@
 
 __pycache__/
 *.pyc
+
+# 리허설용 가상 CTF 빌드 산출물
+rehearsal/.build/

@@ -42,14 +42,14 @@ class MockCTFd:
         self.webhook = []     # Discord로 전송된 content 목록
         self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"}
         self.writes = []      # webhook과 플래그 제출 외의 쓰기 요청 (있으면 안 됨)
-        self.attempts = []    # 플래그 제출: (challenge_id, flag). 정답은 flag{real}
+        self.attempts = []    # 플래그 제출: (challenge_id, flag). 정답은 문제의 flag (기본 flag{real})
         self.server = None
 
     def add(self, cid, name, category, value=100, solves=0, solved=False, description="", connection_info="",
-            files=None, max_attempts=0):
+            files=None, max_attempts=0, flag="flag{real}"):
         self.challenges[cid] = dict(id=cid, name=name, category=category, value=value, solves=solves,
                                     solved_by_me=solved, description=description, connection_info=connection_info,
-                                    files=files or {}, max_attempts=max_attempts)
+                                    files=files or {}, max_attempts=max_attempts, flag=flag)
 
     def start(self, port=0):
         mock = self
@@ -82,7 +82,7 @@ class MockCTFd:
                     return self.reply(200, {"success": True, "data": [{k: c[k] for k in keys} for c in mock.challenges.values()]})
                 if path.startswith("/api/v1/challenges/"):
                     c = mock.challenges[int(path.rsplit("/", 1)[1])]
-                    data = {k: v for k, v in c.items() if k != "files"}
+                    data = {k: v for k, v in c.items() if k not in ("files", "flag")}
                     data["files"] = [f"/files/{c['id']}/{name}?token=secret" for name in c["files"]]
                     data.update(tags=[{"value": "demo"}], hints=[{"id": 1, "cost": 50}, {"id": 2, "content": "무료 힌트"}])
                     return self.reply(200, {"success": True, "data": data})
@@ -105,7 +105,11 @@ class MockCTFd:
                 if path == "/api/v1/challenges/attempt" and self.headers.get("Authorization") == f"Token {TOKEN}":
                     data = json.loads(body)
                     mock.attempts.append((data["challenge_id"], data["submission"]))
-                    status = "correct" if data["submission"] == "flag{real}" else "incorrect"
+                    c = mock.challenges.get(int(data["challenge_id"]), {})
+                    status = "correct" if data["submission"] == c.get("flag") else "incorrect"
+                    if status == "correct":
+                        c["solves"] += 0 if c["solved_by_me"] else 1
+                        c["solved_by_me"] = True
                     return self.reply(200, {"success": True, "data": {"status": status, "message": status.capitalize()}})
                 mock.writes.append(self.path)
                 return self.reply(403, {"message": "forbidden"})
