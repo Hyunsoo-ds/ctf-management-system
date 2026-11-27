@@ -232,10 +232,12 @@ def cmd_kill(a):
     store = store_here()
     with store.locked() as (cfg, st):
         ch = resolve(st["challenges"], a.challenge)
-        if ch.get("window_id"):
+        clean = True
+        if ch.get("window_id") in tmux.alive_windows():
+            clean = all([daemon.stop_agent(cfg, p) for p in panes(ch)])  # /exit로 끝난 것을 확인한 뒤 윈도우를 지운다
             tmux.kill_window(ch["window_id"])
         ch["status"] = "killed"
-        store.emit("KILLED", f"{label(ch)} 종료됨. 이어서 하려면 `ctfm spawn {ch['slug']} --now --resume`")
+        store.emit("KILLED", f"{label(ch)} 종료됨{'' if clean else daemon.FORCED}. 이어서 하려면 `ctfm spawn {ch['slug']} --now --resume`")
 
 
 def cmd_handover(a):
@@ -247,8 +249,8 @@ def cmd_handover(a):
         if ch["status"] not in ACTIVE or peer.get("role") != "successor" or peer.get("exited"):
             raise SystemExit(f"{label(ch)} 에 인수 준비 중인 후임 에이전트가 없음")
         prev, early = ch.get("model"), "" if peer.get("ready") else " (후임이 준비 완료를 보고하기 전)"
-        daemon.promote(store, ch)
-        store.emit("HANDOVER", f"{label(ch)} {prev} → {ch['model']} 전환 완료, {prev} 세션 종료{early}")
+        clean = daemon.promote(store, cfg, ch)
+        store.emit("HANDOVER", f"{label(ch)} {prev} → {ch['model']} 전환 완료, {prev} 세션 종료{'' if clean else daemon.FORCED}{early}")
     discord(store, f"🔄 **[{ch['category']}] {ch['name']}** 메인 전환: {prev} → {ch['model']}{early}", ch)
 
 

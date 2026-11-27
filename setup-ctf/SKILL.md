@@ -93,7 +93,7 @@ disable-model-invocation: true
 
 | 사용자 지시 | 명령 |
 |---|---|
-| "X 끝내", "X 그만" | `ctfm kill X` (윈도우 종료, 슬롯 반환. 대화는 `--resume`으로 복구 가능) |
+| "X 끝내", "X 그만" | `ctfm kill X` (에이전트에 `/exit`를 보내 정상 종료를 확인한 뒤 윈도우를 지운다. 최대 20여 초 걸린다. 슬롯 반환, 대화는 `--resume`으로 복구 가능). 이벤트에 "강제 종료"가 붙으면 `/exit`에 반응하지 않아 그냥 지운 것이니 사용자에게 알린다 |
 | "X 먼저 풀어" | `ctfm prioritize X`. 이미 수집됐는데 슬롯이 가득 차 대기 중이면 `ctfm spawn X --now`로 한도를 넘겨 바로 시작하고, 한도를 넘겼다고 알린다 |
 | "아직 안 나온 문제 Y가 나오면 먼저" | `ctfm prioritize --unknown Y` |
 | "X 다시 시작", "X 이어서" | `ctfm spawn X --now --resume` (풀던 에이전트로 이어 간다) |
@@ -153,7 +153,7 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
   1. 에이전트가 라운드 3을 보고하면 데몬이 같은 윈도우의 오른쪽 pane에 `claude-mythos-5-2`(effort high)를 후임으로 띄운다(`SUCCESSOR`). 후임은 라운드 3 동안 제출하지 않고 Astra의 작업을 파악해 다음 전략을 `HANDOVER.md`에 준비한다. 후임이 막히면 Opus 5.5로 다시 뜬다.
   2. 후임이 준비를 마치면 `READY` 이벤트가 온다(Discord 전송됨). 이때부터 전환 시점을 네가 정한다. 목표는 **Astra가 라운드 3 제출을 마친 뒤 라운드 4가 시작되는 시점**이고, 그러면 라운드 4 제출부터 Mythos가 한다. `ctfm status`의 라운드와 `ctfm peek X --agent codex`로 확인하고, 제출 도중에는 전환하지 않는다. 그때까지 `READY`가 오지 않으면 Astra가 라운드 4도 맡고, `READY`가 온 뒤 Astra가 그 라운드 제출을 마친 시점에 전환한다.
   3. 전환 직전에 `ctfm send --agent codex X "곧 다른 세션에 넘긴다. 지금 STATE.md를 최신으로 갱신하고 끝나면 '갱신 완료'라고만 답하라."`를 보내고 `ctfm peek X --agent codex`로 끝난 것을 확인한다.
-  4. `ctfm handover X`: 후임이 메인이 되고 Astra 세션은 종료된다(`HANDOVER`, Discord 전송됨). 사용자에게 한 줄로 알린다.
+  4. `ctfm handover X`: 후임이 메인이 되고 Astra 세션은 종료된다(진행 중인 턴과 백그라운드 작업을 멈추고 `/exit`로 끝난 것을 확인한 뒤 pane을 지운다. `HANDOVER`, Discord 전송됨). 사용자에게 한 줄로 알린다.
   - 전환 전에 Astra가 사용량 한도로 막히면 데몬이 준비 중이던 후임에게 바로 넘긴다(`MODEL_FALLBACK`).
 - **모델 체인**: 기본 `codex gpt-6.2-astra` → `claude claude-mythos-5-2`(high) → `claude claude-opus-5-5`. 화면에 사용량 한도나 안전 차단 문구가 보이면 데몬이 다음 모델로 다시 띄운다(`MODEL_FALLBACK`). claude끼리 넘어갈 때는 대화를 이어 가고, codex에서 claude로 넘어갈 때는 새로 시작한다(STATE.md는 남는다). 체인은 `.ctfm/config.json`의 `koth.chain`이다.
 - **라운드 요약**: 에이전트는 라운드가 바뀔 때마다 `ctfm report round --round N --summary '...'`로 보고하고, 요약(직전 결과, 제출한 후보, 이번 계획, 상대 동향)이 그 문제의 Discord 포스트로 간다. `ROUND` 이벤트는 구독에서 걸러지므로 네가 따로 전달할 필요는 없다.

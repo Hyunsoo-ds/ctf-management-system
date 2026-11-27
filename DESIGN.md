@@ -336,6 +336,8 @@ download(cfg, file, dest)
   - 어댑터에 `submit(http, cid, flag)`(선택)과 `Http.post_json`(제출 전용)을 추가했다. CTFd는 `POST /api/v1/challenges/attempt`. `[?]` 실제 CTFd에 제출해 보지는 않았다. 응답의 `status` 값(`correct`, `incorrect`, `already_solved`, `ratelimited`, `paused`)은 기억에 의존한 것이라 첫 대회에서 확인이 필요하다.
   - 데몬이 자동으로 제출하지 않고 관리 세션이 `SOLVED`마다 명령을 실행하게 한 이유: 오답 뒤 재제출 여부, 제출 횟수 제한, 플래그 형식 확인처럼 판단이 필요한 경우가 있어서다.
 - **질문 대기는 답이 올 때까지 유지** (2026-11-27): 전에는 Stop hook이 멈춤을 1회 허용하면서 상태를 바로 `running`으로 되돌렸다. 그러면 데몬이 유휴로 판정해 120초 뒤 "계속 진행하라"를 넣어, 질문하고 기다리던 에이전트가 혼자 풀기 시작했다(CLI로 풀기 어려운 문제를 먼저 묻게 한 규칙과 충돌). 이제 Stop hook은 `waiting_user`인 동안 멈춤을 계속 허용하고, 문제 디렉토리의 UserPromptSubmit hook(`ctfm hook prompt`)이 답이 들어온 시점에 `running`으로 되돌린다. hook이 없는 codex는 전과 같이 `ctfm send`가 되돌린다.
+- **에이전트 정상 종료** (2026-11-27, 사용자 결정: tmux로 그냥 죽이지 않는다): `ctfm kill`, KotH 전환(`handover`), 모델 체인 전환은 pane이나 윈도우를 지우기 전에 `stop_agent`로 에이전트를 끝낸다. Escape로 턴을 끊고 → (codex) `/stop` → `/exit` → 실행 스크립트가 종료 표식 파일을 쓸 때까지 대기(설정 `exit_wait`, 기본 20초). 끝나지 않으면 그대로 지우고 이벤트에 "강제 종료"를 남긴다.
+  - 확인한 동작: codex는 `/exit`만 보내면 "Disconnected from this task. Any running work continues."라며 화면만 끊기고 턴과 백그라운드 터미널이 app-server에서 계속 돈다. Escape로 턴을 끊고 `/stop`("Stopping all background terminals")을 한 뒤 나가야 남는 것이 없다. claude는 백그라운드 작업이 있으면 `/exit`에 확인 창("Background work is running")이 뜨고 기본 선택 "Exit and stop tasks"에서 Enter를 누르면 끝난다. 작업 중이던 실제 codex와 claude 모두 약 3초에 종료 코드 0으로 끝나고 남은 프로세스가 없었다.
 
 ## 12. 테스트
 

@@ -43,6 +43,7 @@ UNAVAILABLE_PATTERN = re.compile(
     r"|high.risk cyber", re.I)
 CODEX_FOOTER = re.compile(r"GPT-[\w.\-]+ (\w+)( fast)? ·")  # 예: "GPT-6.2-Astra high fast · /path ·" → (effort, fast)
 EFFORT_MENU = {"low": "Low", "medium": "Medium", "high": "High"}  # codex /model 메뉴의 effort 항목 이름
+EXIT_DIALOG = re.compile(r"Background work is running|Exit and stop tasks")  # claude: 백그라운드 작업이 있을 때의 종료 확인 창
 CHECK_EVERY = 15
 NUDGE_MESSAGE = (
     "플래그를 아직 얻지 못했다. 이 작업은 플래그를 얻어야 끝나며 포기는 없다. 지금 이어서 진행하라. "
@@ -174,6 +175,36 @@ def schedule(store):
             spawn(store, cfg, min(queued, key=lambda c: queue_key(c, cfg["priority"])))
 
 
+def stop_agent(cfg, p):
+    """pane의 에이전트를 정상 종료시킨다. 종료가 확인되면 True. 이 뒤에 호출자가 pane이나 윈도우를 지운다.
+    Escape로 진행 중인 턴을 끊고 /exit를 보낸 뒤, 실행 스크립트가 종료 표식 파일을 쓸 때까지 기다린다.
+    codex는 /exit만 보내면 화면만 끊기고 작업은 app-server에서 계속 돌기 때문에, 턴을 끊고 /stop으로 백그라운드
+    터미널도 정리한 뒤에 나간다. claude는 백그라운드 작업이 있으면 확인 창이 뜨고 기본 선택이 "Exit and stop tasks"다."""
+    wait = float(cfg.get("exit_wait", 20))
+    if not p.get("exit_file") or p.get("exited") or Path(p["exit_file"]).is_file():
+        return True
+    if not wait:
+        return False
+    pane = p["pane"]
+    tmux.keys(pane, "Escape", wait=0.5)
+    deadline = time.time() + 5
+    while BUSY_PATTERN.search(tmux.capture(pane, 15)) and time.time() < deadline:  # 중단이 반영될 때까지
+        time.sleep(0.5)
+    if p["agent"] == "codex":
+        tmux.type_command(pane, "/stop")
+        time.sleep(1)
+    tmux.type_command(pane, "/exit")
+    deadline = time.time() + wait
+    while time.time() < deadline and not Path(p["exit_file"]).is_file():
+        if EXIT_DIALOG.search(tmux.capture(pane, 15)):
+            tmux.keys(pane, "Enter", wait=1)
+        time.sleep(0.5)
+    return Path(p["exit_file"]).is_file()
+
+
+FORCED = " (/exit로 끝나지 않아 강제 종료)"
+
+
 def spawn_successor(store, cfg, ch, idx, resume=False):
     """KotH: 체인의 idx번 모델을 후임으로 메인의 오른쪽 pane에 띄워 인수 준비를 시킨다(AGENTS.md 8번)."""
     peer = ch.setdefault("peer", {"retries": 0, "role": "successor"})
@@ -182,9 +213,11 @@ def spawn_successor(store, cfg, ch, idx, resume=False):
     peer["pane"] = tmux.split(ch["pane"], store.root / ch["dir"], launch_script(store, cfg, ch, peer, resume), left=False)
 
 
-def promote(store, ch):
-    """KotH 전환: 후임을 메인으로 올리고 이전 메인 세션을 종료한다. 후임은 같은 대화를 이어 간다."""
+def promote(store, cfg, ch):
+    """KotH 전환: 후임을 메인으로 올리고 이전 메인 세션을 종료한다. 후임은 같은 대화를 이어 간다.
+    이전 메인이 정상 종료됐는지를 돌려준다."""
     peer = ch.pop("peer")
+    clean = stop_agent(cfg, ch)
     tmux.kill_pane(ch["pane"])
     for key in ("role", "ready"):
         peer.pop(key, None)
@@ -192,6 +225,7 @@ def promote(store, ch):
         ch.pop(key, None)
     ch.update(peer)
     tmux.send_text(ch["pane"], HANDOVER_PROMPT)
+    return clean
 
 
 def koth_fallback(store, cfg, ch, p, reason):
@@ -200,7 +234,7 @@ def koth_fallback(store, cfg, ch, p, reason):
     chain, idx = koth_chain(cfg), p.get("chain_idx", -1)
     if p is ch and ch.get("peer"):
         prev = ch.get("model")
-        promote(store, ch)
+        promote(store, cfg, ch)
         store.emit("MODEL_FALLBACK", f"{label(ch)} {prev} 사용 불가({reason}) → 준비 중이던 후임 {ch['model']}에게 넘김")
         return
     if idx < 0 or idx + 1 >= len(chain):
@@ -210,6 +244,7 @@ def koth_fallback(store, cfg, ch, p, reason):
         return
     prev, nxt = chain[idx], chain[idx + 1]
     resume = prev["agent"] == nxt["agent"]
+    stop_agent(cfg, p)
     if p is ch:
         tmux.kill_window(ch["window_id"])
         apply_entry(ch, chain, idx + 1)

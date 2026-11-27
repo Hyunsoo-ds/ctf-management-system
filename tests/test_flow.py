@@ -41,7 +41,7 @@ class Flow(unittest.TestCase):
         state.write_env(self.root, {"DISCORD_WEBHOOK_URL": self.url + "/webhook"})
         self.store = state.Store(self.root)
         with self.store.locked() as (cfg, st):
-            cfg["agent_cmd"] = "sh -c 'sleep 600' agent"
+            cfg.update(agent_cmd="sh -c 'sleep 600' agent", exit_wait=0)  # 더미는 /exit에 반응하지 않으므로 기다리지 않는다
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -334,6 +334,27 @@ class Flow(unittest.TestCase):
         self.assertEqual(([s["status"] for s in ch["submissions"]], ch["site_solved"]), (["incorrect", "correct"], True))
         self.assertIn("SUBMITTED pwn/easy_one correct", self.store.events_path.read_text())
         self.assertEqual(self.mock.writes, [])
+
+    def test_graceful_exit(self):
+        """세션을 끝낼 때는 /exit를 보내고 에이전트가 정상 종료한 것을 확인한 뒤에 tmux 윈도우를 지운다."""
+        reads_exit = "sh -c 'while read line; do case \"$line\" in */exit) exit 0;; esac; done' agent"
+        with self.store.locked() as (cfg, st):
+            cfg.update(max_agents=1, priority=["easy one"], exit_wait=10, agent_cmd=reads_exit)
+        self.poll()
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+        exit_files = [Path(ch["exit_file"]), Path(ch["peer"]["exit_file"])]
+        self.assertFalse(any(f.exists() for f in exit_files))
+        self.run_cli("kill", "easy one")
+        self.assertEqual([f.read_text().strip() for f in exit_files], ["0", "0"])  # 두 pane 모두 스스로 끝났다
+        self.assertNotIn("TESTCTF-pwn:easy_one", self.windows())
+        self.assertNotIn("강제 종료", self.store.events_path.read_text())
+
+        with self.store.locked() as (cfg, st):  # /exit에 반응하지 않으면 기다린 뒤 강제로 지우고 그 사실을 남긴다
+            cfg.update(exit_wait=1, agent_cmd="sh -c 'sleep 600' agent")
+        self.run_cli("spawn", "easy one", "--now")
+        self.run_cli("kill", "easy one")
+        self.assertNotIn("TESTCTF-pwn:easy_one", self.windows())
+        self.assertIn("강제 종료", self.store.events_path.read_text())
 
     def test_effort_escalation(self):
         """재검토 2회째: claude의 멈춤을 한 번 허용하고, 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
