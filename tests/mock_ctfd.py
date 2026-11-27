@@ -41,7 +41,8 @@ class MockCTFd:
         self.started = True
         self.webhook = []     # Discord로 전송된 content 목록
         self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"}
-        self.writes = []      # webhook 외의 쓰기 요청 (있으면 안 됨)
+        self.writes = []      # webhook과 플래그 제출 외의 쓰기 요청 (있으면 안 됨)
+        self.attempts = []    # 플래그 제출: (challenge_id, flag). 정답은 flag{real}
         self.server = None
 
     def add(self, cid, name, category, value=100, solves=0, solved=False, description="", connection_info="",
@@ -101,6 +102,11 @@ class MockCTFd:
                     mock.threads[thread]["messages"].append(data["content"])
                     mock.webhook.append(data["content"])
                     return self.reply(200, {"channel_id": thread})
+                if path == "/api/v1/challenges/attempt" and self.headers.get("Authorization") == f"Token {TOKEN}":
+                    data = json.loads(body)
+                    mock.attempts.append((data["challenge_id"], data["submission"]))
+                    status = "correct" if data["submission"] == "flag{real}" else "incorrect"
+                    return self.reply(200, {"success": True, "data": {"status": status, "message": status.capitalize()}})
                 mock.writes.append(self.path)
                 return self.reply(403, {"message": "forbidden"})
 

@@ -1,8 +1,9 @@
 """CTFd가 아닌 플랫폼용 어댑터 뼈대. `<CTF>/.ctfm/adapter.py`로 복사해서 채운다.
 
 이 파일이 있으면 ctfm은 내장 CTFd 어댑터 대신 이것을 쓴다. `ctfm check`로 검증한다.
-http는 GET만 할 수 있다: http.get(path) -> bytes, http.get_json(path), http.download(path, dest).
-플래그 제출, 힌트 해제처럼 사이트 상태를 바꾸는 요청은 만들지 않는다.
+수집에는 GET만 쓴다: http.get(path) -> bytes, http.get_json(path), http.download(path, dest).
+힌트 해제처럼 사이트 상태를 바꾸는 요청은 만들지 않는다. 쓰기 요청은 맨 아래의 submit 하나뿐이고,
+사용자가 플래그 자동 제출을 명시적으로 허용했을 때만 채운다.
 """
 from ctfm.adapters.base import AdapterError, Http  # noqa: F401
 
@@ -46,3 +47,10 @@ def fetch(http, cid):
         "hints": [],                                              # 이미 공개된 힌트 본문만
         "max_attempts": 0,                                        # 제출 횟수 제한 (없으면 0)
     }
+
+
+# 선택: 사용자가 플래그 자동 제출을 허용했을 때만 정의한다. 없으면 `ctfm submit`은 이 사이트에서 쓸 수 없다고 알린다.
+# def submit(http, cid, flag):
+#     """{status, message} 반환. status는 정답이면 "correct", 이미 풀었으면 "already_solved", 오답이면 "incorrect"."""
+#     r = http.post_json("/api/submit", {"id": cid, "flag": flag})
+#     return {"status": "correct" if r["ok"] else "incorrect", "message": r.get("message", "")}

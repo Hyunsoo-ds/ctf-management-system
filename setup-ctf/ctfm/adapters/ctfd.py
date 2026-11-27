@@ -1,4 +1,4 @@
-"""CTFd 어댑터 (토큰 API, 읽기 전용)."""
+"""CTFd 어댑터 (토큰 API). 수집은 읽기 전용이고, submit만 쓰기 요청이다."""
 import urllib.parse
 from pathlib import PurePosixPath
 
@@ -68,3 +68,13 @@ def fetch(http, cid):
         "hints": [_hint(h) for h in c.get("hints") or [] if isinstance(h, dict)],
         "max_attempts": c.get("max_attempts") or 0,
     }
+
+
+def submit(http, cid, flag):
+    """플래그를 제출한다. `ctfm submit`만 부른다. {status, message} 반환.
+    status: correct, incorrect, already_solved, ratelimited, paused 등 CTFd가 주는 값 그대로."""
+    body = http.post_json("/api/v1/challenges/attempt", {"challenge_id": int(cid) if str(cid).isdigit() else cid, "submission": flag})
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict) or not data.get("status"):
+        raise AdapterError(f"CTFd 제출 응답을 해석할 수 없음: {str(body)[:200]}")
+    return {"status": data["status"], "message": data.get("message") or ""}

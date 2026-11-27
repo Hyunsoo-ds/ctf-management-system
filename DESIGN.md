@@ -330,6 +330,11 @@ download(cfg, file, dest)
   - Stop hook: 후임은 `ready` 전에는 준비를 계속하라는 문구로 차단하고, `ready` 뒤에는 전환을 기다리며 멈추게 둔다. 유휴 재개 메시지는 후임에게 넣지 않는다.
   - 모델 사용 불가 감지는 pane별이다. 메인(Astra)이 막혔는데 후임이 있으면 후임에게 바로 넘기고, 후임이 막히면 후임 pane만 체인의 다음 모델로 다시 띄운다.
   - `ctfm report`를 부른 쪽은 `CTFM_AGENT`가 가리키는 에이전트의 pane, 없으면 codex pane으로 찾는다(메인이 codex이고 후임이 claude인 배치에도 맞게 일반화).
+- **플래그 자동 제출 허용** (2026-11-27, 사용자 결정: 속도 때문에 자동 제출이 필요할 때가 있음):
+  - "절대 제출하지 않는다"를 "사용자가 명시적으로 허용하면 관리 세션에 한해 제출한다"로 바꿨다. 풀이 에이전트 규칙(사이트에 접근하지 않음)은 그대로다.
+  - `ctfm submit <문제> [--flag F] [--approved]`: 설정 `auto_submit`이 켜져 있거나(`ctfm set auto-submit 1`, 대회 전체 허용) `--approved`(이 제출만 허용)일 때만 동작한다. 문제 디렉토리 안에서 부르면 거부한다(풀이 에이전트 차단). 같은 플래그는 다시 제출하지 않고, 결과를 문제 기록의 `submissions`, `SUBMITTED` 이벤트, Discord 포스트에 남긴다.
+  - 어댑터에 `submit(http, cid, flag)`(선택)과 `Http.post_json`(제출 전용)을 추가했다. CTFd는 `POST /api/v1/challenges/attempt`. `[?]` 실제 CTFd에 제출해 보지는 않았다. 응답의 `status` 값(`correct`, `incorrect`, `already_solved`, `ratelimited`, `paused`)은 기억에 의존한 것이라 첫 대회에서 확인이 필요하다.
+  - 데몬이 자동으로 제출하지 않고 관리 세션이 `SOLVED`마다 명령을 실행하게 한 이유: 오답 뒤 재제출 여부, 제출 횟수 제한, 플래그 형식 확인처럼 판단이 필요한 경우가 있어서다.
 
 ## 12. 테스트
 

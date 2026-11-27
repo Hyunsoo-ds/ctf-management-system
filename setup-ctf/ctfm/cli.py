@@ -98,7 +98,7 @@ def cmd_init(a):
         for key, default in (("start", 0), ("max_agents", 8), ("priority", []), ("agent", "claude"),
                              ("model", "claude-opus-5"), ("effort", "xhigh"), ("codex_model", "gpt-6-sol"),
                              ("codex_effort", "medium"), ("codex_fast", 1), ("poll_interval", 30),
-                             ("idle_nudge", 120), ("category_map", {}), ("koth", KOTH_DEFAULTS)):
+                             ("idle_nudge", 120), ("category_map", {}), ("koth", KOTH_DEFAULTS), ("auto_submit", 0)):
             cfg.setdefault(key, copy.deepcopy(default))
     env = dict(e.split("=", 1) for e in a.env)
     if a.token:
@@ -252,6 +252,38 @@ def cmd_handover(a):
     discord(store, f"🔄 **[{ch['category']}] {ch['name']}** 메인 전환: {prev} → {ch['model']}{early}", ch)
 
 
+def cmd_submit(a):
+    """플래그를 사이트에 제출한다. 사용자가 명시적으로 허용했을 때 관리 세션만 쓴다."""
+    store = store_here()
+    cfg, st = store.config(), store.state()
+    if current_challenge(st, store, Path.cwd()) is not None:
+        raise SystemExit("풀이 에이전트는 플래그를 제출하지 않는다. `ctfm report solved`로 보고만 한다.")
+    ch = resolve(st["challenges"], a.challenge)
+    if not (cfg.get("auto_submit") or a.approved):
+        raise SystemExit("플래그 제출은 사용자가 명시적으로 허용했을 때만 한다. "
+                         "대회 전체 허용은 `ctfm set auto-submit 1`, 이 제출 한 번만 허용받았으면 `--approved`.")
+    flag = a.flag or ch.get("flag")
+    if not flag:
+        raise SystemExit(f"{label(ch)} 에 제출할 플래그가 없음 (에이전트가 아직 보고하지 않음)")
+    judged = ("correct", "already_solved", "incorrect")  # rate limit처럼 채점되지 않은 시도는 다시 낼 수 있다
+    done = next((s for s in ch.get("submissions", []) if s["flag"] == flag and s["status"] in judged), None)
+    if done:
+        raise SystemExit(f"{label(ch)} 이미 제출한 플래그임 (결과: {done['status']}). 같은 플래그를 다시 제출하지 않는다.")
+    http, adapter = adapters.load(store)
+    if not hasattr(adapter, "submit"):
+        raise SystemExit("이 사이트의 어댑터(.ctfm/adapter.py)에 submit이 없음. 제출 방법을 확인해 submit을 추가해야 함")
+    result = adapter.submit(http, ch["id"], flag)
+    solved = result["status"] in ("correct", "already_solved")
+    with store.locked() as (cfg, st):
+        saved = st["challenges"][ch["id"]]
+        saved.setdefault("submissions", []).append({"flag": flag, "status": result["status"], "time": time.time()})
+        if solved:
+            saved["site_solved"] = True
+        store.emit("SUBMITTED", f"{label(ch)} {result['status']} {result['message']} flag={flag}")
+    discord(store, f"📮 **[{ch['category']}] {ch['name']}** 플래그 제출: **{result['status']}** {result['message']}\n`{flag}`", ch)
+    return 0 if solved else 1
+
+
 def cmd_prioritize(a):
     store = store_here()
     with store.locked() as (cfg, st):
@@ -345,7 +377,7 @@ def cmd_report(a):
             for other in live_panes(ch):
                 if other is not p:  # 동시 풀이의 상대는 더 풀 이유가 없다
                     tmux.send_text(other["pane"], f"{p['agent']} 세션이 이 문제의 플래그를 얻었다. 이 문제는 끝났다. 지금 하던 작업을 멈추고 턴을 끝내라.")
-            print("기록됨 (Discord 알림 전송). 플래그 획득 경로를 채팅에 요약하라. 사이트 제출은 사용자가 한다.")
+            print("기록됨 (Discord 알림 전송). 플래그 획득 경로를 채팅에 요약하라. 사이트 제출은 네가 하지 않는다.")
         elif a.kind == "retry":
             if p["retries"] >= RETRY_LIMIT:
                 print(f"이미 재검토를 {RETRY_LIMIT}회 했다. 이제 AGENTS.md 9번 절차를 수행하라: "
@@ -461,6 +493,12 @@ def main(argv=None):
     s.add_argument("challenge")
     s.set_defaults(fn=cmd_handover)
 
+    s = sub.add_parser("submit", help="[관리 세션 전용] 플래그를 사이트에 제출 (사용자가 명시적으로 허용했을 때만)")
+    s.add_argument("challenge")
+    s.add_argument("--flag", help="생략하면 에이전트가 보고한 플래그")
+    s.add_argument("--approved", action="store_true", help="auto-submit이 꺼져 있어도 사용자가 이 제출을 허용했음")
+    s.set_defaults(fn=cmd_submit)
+
     s = sub.add_parser("prioritize", help="문제를 대기 순서 맨 앞으로")
     s.add_argument("challenges", nargs="+")
     s.add_argument("--unknown", dest="known", action="store_false", help="아직 공개되지 않은 문제 이름을 그대로 등록")
@@ -481,8 +519,9 @@ def main(argv=None):
 
     s = sub.add_parser("set", help="설정 변경")
     s.add_argument("key", choices=["max-agents", "agent", "model", "effort", "codex-model", "codex-effort", "codex-fast",
-                                   "poll-interval", "idle-nudge", "category-map"],
-                   help="effort: claude 시작 effort. codex-effort: low|medium|high. codex-fast: 1/0. "
+                                   "poll-interval", "idle-nudge", "category-map", "auto-submit"],
+                   help="auto-submit: 1이면 관리 세션의 `ctfm submit`을 허용 (사용자가 명시적으로 허용했을 때만 켠다). "
+                        "effort: claude 시작 effort. codex-effort: low|medium|high. codex-fast: 1/0. "
                         "idle-nudge: 플래그 없이 입력 대기로 멈춘 에이전트를 몇 초 뒤 재개시킬지 (0이면 끔)")
     s.add_argument("value")
     s.set_defaults(fn=cmd_set)

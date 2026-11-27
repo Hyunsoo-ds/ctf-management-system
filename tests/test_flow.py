@@ -233,8 +233,8 @@ class Flow(unittest.TestCase):
         self.assertEqual(sum(s in state.ACTIVE for s in self.status().values()), 3)
         self.run_cli("send", "wanted", "힌트: 첫 줄\n둘째 줄")
 
-        # 문제 사이트에는 쓰기 요청이 한 번도 가지 않는다
-        self.assertEqual(self.mock.writes, [])
+        # 문제 사이트에는 쓰기 요청이 한 번도 가지 않는다 (플래그 제출 포함)
+        self.assertEqual((self.mock.writes, self.mock.attempts), ([], []))
 
     def test_exit_detection_and_prioritize(self):
         with self.store.locked() as (cfg, st):
@@ -304,6 +304,31 @@ class Flow(unittest.TestCase):
         self.run_cli("spawn", "wanted", "--now")
         self.assertEqual(run_housekeep(3).get("nudges"), 0)
 
+
+    def test_submit(self):
+        """플래그 제출은 사용자가 허용했을 때(auto-submit 또는 --approved) 관리 세션만 한다."""
+        self.poll()
+        easy = self.chal_dir("easy one")
+        self.run_cli("report", "solved", "--flag", "flag{wrong}", cwd=easy)
+        with self.assertRaises(SystemExit):  # 허용 전에는 제출하지 않는다
+            self.run_cli("submit", "easy one")
+        with self.assertRaises(SystemExit):  # 풀이 에이전트(문제 디렉토리)는 허용돼 있어도 제출할 수 없다
+            self.run_cli("submit", "easy one", "--approved", cwd=easy)
+        self.assertEqual(self.mock.attempts, [])
+
+        code, _ = self.run_cli("submit", "easy one", "--approved")  # 이번 한 번만 허용
+        self.assertEqual((code, self.mock.attempts), (1, [(2, "flag{wrong}")]))
+        self.assertIn("incorrect", self.mock.webhook[-1])
+        with self.assertRaises(SystemExit):  # 같은 플래그를 다시 제출하지 않는다
+            self.run_cli("submit", "easy one", "--approved")
+
+        self.run_cli("set", "auto-submit", "1")  # 대회 전체 허용
+        code, _ = self.run_cli("submit", "easy one", "--flag", "flag{real}")
+        self.assertEqual((code, self.mock.attempts[-1]), (0, (2, "flag{real}")))
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+        self.assertEqual(([s["status"] for s in ch["submissions"]], ch["site_solved"]), (["incorrect", "correct"], True))
+        self.assertIn("SUBMITTED pwn/easy_one correct", self.store.events_path.read_text())
+        self.assertEqual(self.mock.writes, [])
 
     def test_effort_escalation(self):
         """재검토 2회째: claude의 멈춤을 한 번 허용하고, 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""

@@ -18,7 +18,7 @@ disable-model-invocation: true
 
 ## 지켜야 할 것
 
-- **플래그를 사이트에 제출하지 않는다.** 너도, 풀이 에이전트도 하지 않는다. 제출은 사용자가 한다. 힌트 해제처럼 사이트 상태를 바꾸는 요청도 보내지 않는다. 어댑터는 GET만 쓴다. 예외는 KotH 문제뿐이다(5절): KotH 에이전트는 위임받은 접근 권한으로 그 문제의 라운드를 조회하고, 정해진 제출 절차가 있을 때만 제출한다.
+- **플래그 제출은 사용자가 명시적으로 허용했을 때만, 너만 한다.** 기본은 제출하지 않는 것이고 제출은 사용자가 한다. 사용자가 "플래그 자동 제출해", "X 제출해"처럼 분명히 말했을 때만 4절의 절차로 `ctfm submit`을 쓴다. 허용 범위(대회 전체인지, 그 문제 한 번인지)를 넘지 않고, 애매하면 묻는다. 풀이 에이전트는 어떤 경우에도 제출하지 않으며 제출을 시키는 메시지도 보내지 않는다. 힌트 해제처럼 사이트 상태를 바꾸는 다른 요청은 보내지 않고, 어댑터의 수집은 GET만 쓴다. KotH 문제는 별도다(6절): KotH 에이전트는 위임받은 접근 권한으로 그 문제의 라운드를 조회하고, 정해진 제출 절차가 있을 때만 제출한다.
 - **인증 정보는 `<CTF>/.env`에만 둔다.** 토큰이나 쿠키를 문제 디렉토리의 파일, 풀이 에이전트에게 보내는 메시지, Discord 알림에 넣지 않는다. 예외는 `ctfm`이 KotH 문제 디렉토리에 만드는 `CTF_ACCESS.env`뿐이다.
 - **풀이 에이전트는 포기하지 않는다.** 플래그 없이 멈추려 하면 Stop hook이 되돌린다. 막힘 알림(`BLOCKED`)은 사용자가 insight를 줄 기회이고, 에이전트는 그 뒤에도 계속 푼다. 에이전트에게 "그만해도 된다"는 취지의 메시지를 보내지 않는다. 세션을 끝내는 것은 사용자가 지시했을 때의 `ctfm kill`뿐이다.
 
@@ -32,7 +32,7 @@ disable-model-invocation: true
    ctfm init --url <URL> --token <토큰> [--start '<ISO>'] [--max-agents N] [--priority 'a,b'] [--agent claude|codex] [--model <id>] [--codex-model <id>]
    ```
    생략 시 기본값은 max-agents 8, 에이전트 claude, model `claude-opus-5`(effort `xhigh`), codex 모델 `gpt-6-sol`(effort `medium`, fast 켬), 즉시 시작이다. `--model`은 claude용, `--codex-model`은 codex용이다. effort와 fast는 `ctfm set effort|codex-effort|codex-fast <값>`으로 바꾼다(KotH에는 적용되지 않는다).
-   **pwn과 rev 문제는 동시 풀이다**(퍼블 경쟁용): 한 윈도우를 좌우로 나눠 왼쪽 pane에 codex, 오른쪽 pane에 claude를 띄운다. 자세한 것은 4절.
+   **pwn과 rev 문제는 동시 풀이다**(퍼블 경쟁용): 한 윈도우를 좌우로 나눠 왼쪽 pane에 codex, 오른쪽 pane에 claude를 띄운다. 자세한 것은 5절.
    codex 에이전트는 `insane-codex`(빌드 기본값이 `--yolo`)로 뜨고 `$solve-challenge`로 시작한다. **codex에는 Stop hook(포기 차단)이 없다.** 대신 데몬이 플래그 없이 입력 대기로 120초 넘게 멈춘 에이전트에 계속하라는 메시지를 자동으로 넣는다(`NUDGED`, claude에도 적용, 사용자가 그 윈도우를 보고 있으면 건너뜀, `ctfm set idle-nudge <초>`로 조정, 0이면 끔). codex가 `ASK`로 질문하면 상태가 `waiting_user`로 남는데, `ctfm send`로 답을 보내면 `running`으로 돌아간다. 사용자가 윈도우에 직접 답했다면 `ctfm send <문제> "계속하라"`로 상태를 되돌린다.
 3. Discord 확인: `ctfm notify "setup-ctf 시작: <CTF 이름>"`. webhook은 **포럼 채널**의 것이어야 한다. 알림은 문제마다 `[분야] 문제이름` 포스트 하나에 모이고(플래그, 막힘, 질문, KotH 라운드 요약), `ctfm notify`는 대회 이름의 공통 포스트로 간다. 실패하면 `.env`의 `DISCORD_WEBHOOK_URL`(이 디렉토리의 `.env` → 스킬 저장소의 `.env` 순으로 찾는다)을 사용자와 확인한다.
 4. 로그인 확인: `ctfm check`.
@@ -67,7 +67,7 @@ disable-model-invocation: true
 | 이벤트 | 의미 | 할 일 |
 |---|---|---|
 | `NEW`, `SPAWNED`, `SKIPPED` | 문제 수집, 에이전트 시작, 이미 풀린 문제 제외 | 여러 건이면 묶어서 전달 |
-| `SOLVED` | 에이전트가 플래그 획득 (Discord 전송됨) | 플래그와 함께 전달. 사용자가 제출한다 |
+| `SOLVED` | 에이전트가 플래그 획득 (Discord 전송됨) | 플래그와 함께 전달. 자동 제출이 허용돼 있으면(4절) 바로 `ctfm submit X`, 아니면 사용자가 제출한다 |
 | `ESCALATED` | claude 에이전트가 2번째로 막혀 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 시작함 | 한 줄 전달 |
 | `BLOCKED` | 3번째 막힘(재검토 2회 후에도 진전 없음), insight 요청 (Discord 전송됨). 에이전트는 계속 진행 중 | 전달. 사용자가 힌트를 주면 `ctfm send`로 전달 |
 | `ASK` | 에이전트가 사용자 답을 기다림: 토큰/시도 제한, 원격 다운, 또는 Linux CLI로 풀기 어려운 문제(VM 이미지 침해 사고 분석 등) | 바로 전달. 답은 `ctfm send`로 전달하거나 사용자가 그 윈도우에 직접 입력 |
@@ -75,8 +75,9 @@ disable-model-invocation: true
 | `EXITED` | 에이전트 프로세스나 윈도우가 사라짐 (슬롯 반환됨) | `ctfm peek`으로 원인 확인 후 `ctfm spawn <문제> --now --resume` 여부를 사용자에게 제안 |
 | `NUDGED` (구독에서 걸러짐) | 플래그 없이 입력 대기로 멈춘 에이전트에 데몬이 계속 진행 메시지를 넣음 | 할 일 없음. `ctfm status`의 "유휴 재개" 횟수가 빠르게 늘면 `ctfm peek`으로 왜 멈추는지 보고 사용자에게 알린다 |
 | `SUCCESSOR` | KotH 라운드 3: 후임(Mythos 5.2 high)을 오른쪽 pane에 띄워 인수 준비 시작 | 한 줄 전달 |
-| `READY` | KotH 후임이 인수 준비를 마침 (Discord 전송됨) | 5절의 메인 전환 절차 2~4번을 수행한다 |
+| `READY` | KotH 후임이 인수 준비를 마침 (Discord 전송됨) | 6절의 메인 전환 절차 2~4번을 수행한다 |
 | `HANDOVER` | KotH 메인 전환 완료, 이전 메인 세션 종료 | 한 줄 전달 |
+| `SUBMITTED` | `ctfm submit`의 결과 (Discord 전송됨) | `correct`/`already_solved`면 한 줄 전달. 그 외는 4절의 오답 처리 |
 | `MODEL_FALLBACK` | KotH 에이전트의 모델이 사용량 한도나 안전 차단으로 막혀 다음 모델로 다시 띄움 | 전달 (어느 모델에서 어느 모델로, 이유) |
 | `MODEL_UNAVAILABLE` | KotH 모델 체인을 다 써서 더 넘어갈 모델이 없음 | 바로 전달. `ctfm peek`으로 화면을 확인하고 사용자와 대책을 정한다 |
 | `FAST` | codex 에이전트의 fast를 켜거나 끔 (KotH는 라운드 기준, 그 외는 설정 `codex_fast`) | 한 줄 전달 |
@@ -109,7 +110,23 @@ disable-model-invocation: true
 
 문제 이름은 ID, 디렉토리 이름, 이름의 일부로 지정할 수 있다. 여러 개가 걸리면 `ctfm`이 후보를 보여 준다.
 
-## 4. 동시 풀이와 effort 상향
+## 4. 플래그 자동 제출 (사용자가 허용했을 때만)
+
+퍼블 경쟁처럼 속도가 중요할 때 사용자가 자동 제출을 허용할 수 있다. 허용은 사용자의 명시적인 말로만 성립한다. 네가 먼저 켜지 않고, 이전 대회나 다른 문제에서의 허용을 이어 쓰지 않는다.
+
+| 사용자 지시 | 할 일 |
+|---|---|
+| "플래그 자동 제출해", "앞으로 나오는 플래그는 바로 제출해" | `ctfm set auto-submit 1`. 이후 `SOLVED`가 올 때마다 `ctfm submit X`. 이미 `solved`인데 제출 안 된 문제도 제출할지 사용자에게 확인한다 |
+| "X 제출해" (이 문제만) | `ctfm submit X --approved` |
+| "자동 제출 꺼" | `ctfm set auto-submit 0` |
+
+- `ctfm submit X`는 에이전트가 보고한 플래그를 제출하고 결과를 Discord의 그 문제 포스트와 `SUBMITTED` 이벤트로 남긴다. 대회 디렉토리(관리 세션)에서만 동작하고 문제 디렉토리에서는 거부된다.
+- **오답(`incorrect`)이면 다시 제출하지 않는다.** 같은 플래그는 명령이 거부한다. 사용자에게 바로 알리고, `ctfm spawn X --now --resume` 후 `ctfm send X "제출 결과 오답이었다. 플래그를 원격에서 다시 얻어 확인하라."`로 에이전트를 재개시킨다. 에이전트가 새 플래그를 보고해도 두 번째 제출은 사용자에게 확인받는다(오답 감점, 제출 횟수 제한).
+- 제출 횟수 제한이 있는 문제(`CHALLENGE.md`의 "제출 횟수 제한")는 플래그가 이 대회의 플래그 형식과 맞는지 먼저 확인하고, 맞지 않으면 제출하지 않고 사용자에게 묻는다.
+- `ratelimited`면 잠시 기다렸다가 같은 명령을 한 번 다시 실행한다(채점되지 않은 시도라 같은 플래그도 다시 낼 수 있다). 또 막히면 사용자에게 알린다. `paused`나 그 밖의 상태도 사용자에게 알린다.
+- CTFd가 아닌 사이트는 `.ctfm/adapter.py`에 `submit`이 있어야 한다. 사용자가 자동 제출을 허용했을 때만, 제출 요청 형식을 사이트의 JS나 사용자가 알려 준 정보로 확인해 추가한다. 확인용으로 실제 제출을 보내 보지 않는다.
+
+## 5. 동시 풀이와 effort 상향
 
 **동시 풀이 (pwn, rev)**: 퍼블 점수 때문에 빨리 푸는 것이 중요해서 두 에이전트가 같은 문제 디렉토리에서 독립적으로 경쟁한다.
 
@@ -127,7 +144,7 @@ disable-model-invocation: true
 
 codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 
-## 5. King of the Hill (KotH) 문제
+## 6. King of the Hill (KotH) 문제
 
 사이트 카테고리나 문제 이름에 `KotH`/`King of the Hill`이 들어가면 `koth` 유형으로 분류된다(`koth/<문제>/`, tmux `<ctf>-koth`). 사이트 카테고리 이름이 다르면 `ctfm set category-map '<사이트 카테고리>=koth'`로 지정한다. jeopardy와 다른 점:
 
@@ -146,7 +163,7 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 - **규칙**: `AGENTS.md`는 KotH용 템플릿(`templates/AGENTS_KOTH.md`)으로 만든다. Stop hook과 유휴 재개 메시지도 "대회 끝까지 개선을 계속하라"는 KotH용 문구를 쓴다.
 - 사용자가 "이 KotH는 Mythos로 바꿔"라고 하면 `ctfm kill X` 후 `ctfm spawn X --now --agent claude --model claude-mythos-5-2`. 직접 고른 모델에는 자동 전환과 fast 조정을 하지 않는다.
 
-## 6. 이 대회의 특징을 기억한다
+## 7. 이 대회의 특징을 기억한다
 
 진행하면서 알게 된, 다른 문제에도 적용되는 사실을 `CTF_NOTES.md`에 누적한다. 예: 실제 플래그 형식, 원격 인스턴스가 5분 뒤 꺼진다는 것, 모든 문제에 PoW가 붙는다는 것, 운영진 공지. 적은 뒤:
 
