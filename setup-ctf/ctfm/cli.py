@@ -29,7 +29,7 @@ ESCALATE_NOTICE = """재검토 {n}/{limit} 기록됨. 이번에는 effort를 max
 STOP_REASON = """플래그를 아직 얻지 못했다. 이 작업은 플래그를 얻어야 끝나며 포기는 없다. 지금 멈추지 말고 이어서 진행하라.
 - 다음 가설이 있으면 바로 실행한다. 백그라운드 작업을 기다리는 중이면 그동안 다른 가설을 검증한다.
 - 가설이 없으면 AGENTS.md 8번(막혔을 때) 절차를 수행한다. 재검토를 2회 했다면 9번(insight 요청) 후 계속한다.
-- 토큰, 시도 횟수 제한, rate limit 때문에 사용자 확인이 필요한 경우에만 `ctfm report ask`로 질문하고 멈출 수 있다.
+- AGENTS.md 4번에 해당하는 경우(토큰, 시도 횟수 제한, rate limit, CLI로 풀기 어려운 문제 등)에만 `ctfm report ask`로 질문하고 멈출 수 있다.
 - 플래그를 얻었다면 `ctfm report solved --flag '<flag>'`를 실행한다."""
 KOTH_STOP_REASON = """KotH는 대회가 끝날 때까지 점수를 올리는 문제라 끝이 없다. 지금 멈추지 말고 이어서 진행하라.
 - 현재 라운드를 확인해 바뀌었으면 `ctfm report round --round <번호> --summary '<진행 요약>'`으로 보고한다(AGENTS.md 4번).
