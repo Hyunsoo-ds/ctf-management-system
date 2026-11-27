@@ -2,12 +2,15 @@
 """리허설용 가상 CTF: mock CTFd(문제 사이트) + 분야별 jeopardy 문제 6개 + 원격 문제 서비스.
 
     python3 rehearsal/serve.py            # 문제를 빌드하고 서비스를 띄운다 (Ctrl+C로 종료)
+    python3 rehearsal/serve.py --file chal.zip --name NodeFS --category Web --flag 'FLAG{..}' \
+        --connection http://127.0.0.1:41337/ --description '...'   # 가져온 문제 파일 하나만 올린다 (원격은 따로 띄운다)
 
 - 문제 사이트: http://127.0.0.1:8000  (브라우저 화면 + CTFd API, 토큰 `testtoken`)
 - pwn 원격:    nc 127.0.0.1 31337
 - web 원격:    http://127.0.0.1:8081
 빌드 산출물은 rehearsal/.build/ 에 만든다. 원격의 진짜 플래그는 배포 파일에 들어가지 않는다.
 """
+import argparse
 import base64
 import json
 import random
@@ -259,9 +262,44 @@ class PwnServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+def serve_site(mock, lines):
+    """문제 사이트를 띄우고 제출 기록을 찍으며 Ctrl+C까지 기다린다."""
+    mock.pages["/"] = mock.pages["/challenges"] = (HERE / "index.html").read_text().replace("__TOKEN__", TOKEN).encode()
+    site = mock.start(SITE_PORT)
+    print("\n".join([f"문제 사이트  {site}   (브라우저로 열 수 있음, 토큰: {TOKEN})", *lines]), flush=True)
+    print(f"\n관리 세션 시작:  /setup-ctf {site} --token {TOKEN}\n제출 기록은 아래에 찍힌다. Ctrl+C로 종료.", flush=True)
+    seen = 0
+    try:
+        while True:
+            threading.Event().wait(1)
+            for cid, flag in mock.attempts[seen:]:
+                ok = flag == mock.challenges[int(cid)]["flag"]
+                print(f"[제출] {mock.challenges[int(cid)]['name']}: {flag} → {'정답' if ok else '오답'}", flush=True)
+            seen = len(mock.attempts)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        mock.stop()
+
+
 def main():
-    dist = build()
+    ap = argparse.ArgumentParser(description="리허설용 가상 CTF")
+    ap.add_argument("--file", help="이 파일 하나를 문제로 올린다 (없으면 내장 문제 6개)")
+    ap.add_argument("--name")
+    ap.add_argument("--category", default="Misc")
+    ap.add_argument("--description", default="")
+    ap.add_argument("--connection", default="", help="원격 접속 정보 (원격 서비스는 따로 띄워 둔다)")
+    ap.add_argument("--flag", default="REHEARSAL{unknown}")
+    ap.add_argument("--points", type=int, default=500)
+    a = ap.parse_args()
     mock = MockCTFd()
+    if a.file:
+        path = Path(a.file)
+        # 내장 문제(1~6)를 이미 본 대회 디렉토리에서도 새 문제로 잡히게 다른 ID를 쓴다
+        mock.add(101, a.name or path.stem, a.category, value=a.points, solves=0, flag=a.flag, description=a.description,
+                 connection_info=a.connection, files={path.name: path.read_bytes()})
+        return serve_site(mock, [f"문제        [{a.category}] {a.name or path.stem} ({path.name})", f"원격        {a.connection or '없음'}"])
+    dist = build()
     mock.add(1, "baby overflow", "Pwnable", value=100, solves=12, flag=FLAGS["pwn"],
              connection_info=f"nc {HOST} {PWN_PORT}", files={"baby_overflow.zip": make_zip(dist["pwn"])},
              description="이름을 물어보는 친절한 서비스입니다. 원격 서버의 flag.txt를 읽으세요.")
@@ -276,27 +314,13 @@ def main():
              description="플래그만 FLAG로 판정하도록 학습시킨 모델입니다. 모델이 FLAG라고 답하는 입력을 찾으세요. (원격 서버 없음)")
     mock.add(6, "layers", "Misc", value=50, solves=30, flag=FLAGS["misc"], files={"layers.txt": dist["misc"]["layers.txt"][0]},
              description="누가 플래그를 여러 겹으로 싸 놓았습니다. (원격 서버 없음)")
-    mock.pages["/"] = mock.pages["/challenges"] = (HERE / "index.html").read_text().replace("__TOKEN__", TOKEN).encode()
-    site = mock.start(SITE_PORT)
-
     pwn = PwnServer((HOST, PWN_PORT), PwnHandler)
     threading.Thread(target=pwn.serve_forever, daemon=True).start()
     web = subprocess.Popen([sys.executable, "app.py", str(WEB_PORT)], cwd=BUILD / "web", env={"FLAG": FLAGS["web"], "PATH": "/usr/bin:/bin"})
-    print(f"문제 사이트  {site}   (브라우저로 열 수 있음, 토큰: {TOKEN})\npwn 원격     nc {HOST} {PWN_PORT}\nweb 원격     http://{HOST}:{WEB_PORT}/", flush=True)
-    print(f"\n관리 세션 시작:  /setup-ctf {site} --token {TOKEN}\n제출 기록은 아래에 찍힌다. Ctrl+C로 종료.", flush=True)
-    seen = 0
     try:
-        while True:
-            threading.Event().wait(1)
-            for cid, flag in mock.attempts[seen:]:
-                ok = flag == mock.challenges[int(cid)]["flag"]
-                print(f"[제출] {mock.challenges[int(cid)]['name']}: {flag} → {'정답' if ok else '오답'}", flush=True)
-            seen = len(mock.attempts)
-    except KeyboardInterrupt:
-        pass
+        serve_site(mock, [f"pwn 원격     nc {HOST} {PWN_PORT}", f"web 원격     http://{HOST}:{WEB_PORT}/"])
     finally:
         web.terminate()
-        mock.stop()
 
 
 if __name__ == "__main__":
