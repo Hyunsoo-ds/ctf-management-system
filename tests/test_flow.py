@@ -78,6 +78,10 @@ class Flow(unittest.TestCase):
         ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == name)
         return self.root / ch["dir"]
 
+    def pane_count(self, name):
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == name)
+        return len(tmux.tmux("list-panes", "-t", ch["window_id"]).splitlines())
+
     def windows(self):
         out = subprocess.run(["tmux", "-L", SOCKET, "list-windows", "-a", "-F", "#{session_name}:#{window_name}"],
                              capture_output=True, text=True).stdout
@@ -103,6 +107,12 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.status(), {"hard one": "queued", "easy one": "running", "mid web": "queued",
                                          "wanted": "running", "done": "site_solved"})
         self.assertEqual(self.windows(), ["TESTCTF-crypto:wanted", "TESTCTF-pwn:easy_one"])
+        self.assertEqual(self.pane_count("easy one"), 2)  # pwn은 codex와 claude를 좌우 pane에 동시에 (슬롯은 하나)
+        self.assertEqual(self.pane_count("wanted"), 1)
+        _, out = self.run_cli("status")
+        self.assertIn("codex gpt-6-sol medium fast 재검토 0/2 | claude claude-opus-5 xhigh 재검토 0/2", out)
+        _, out = self.run_cli("peek", "easy one")
+        self.assertLess(out.index("── codex ──"), out.index("── claude ──"))
 
         # 디렉토리 구조와 생성 파일
         hard = self.chal_dir("hard one")
@@ -115,6 +125,8 @@ class Flow(unittest.TestCase):
             self.assertIn(expected, challenge_md)
         self.assertNotIn("token=secret", challenge_md)
         self.assertIn("포기는 없다", (hard / "AGENTS.md").read_text())
+        self.assertIn("STATE.claude.md", (hard / "AGENTS.md").read_text())  # 동시 풀이 규칙은 pwn, rev에만
+        self.assertNotIn("동시 풀이", (self.chal_dir("wanted") / "AGENTS.md").read_text())
         hook = json.loads((hard / ".claude" / "settings.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertTrue(hook.endswith("bin/ctfm hook stop"))
         self.assertFalse(list(self.root.rglob(".env.*")) or (hard / ".env").exists())
@@ -131,30 +143,56 @@ class Flow(unittest.TestCase):
         _, out = self.run_cli("hook", "stop", stdin=hook_in)
         self.assertEqual(json.loads(out)["decision"], "block")
 
-        # 재검토 3회 → 4번째는 blocked 안내, BLOCKED.md 없이는 blocked 불가
-        for n in (1, 2, 3):
+        # 재검토 2회 → 3번째 막힘은 blocked 안내, BLOCKED 파일 없이는 blocked 불가.
+        # 동시 풀이에서 CTFM_AGENT가 없는 호출은 codex의 것이다(effort 상향 없음, 횟수는 pane별)
+        for n in (1, 2):
             _, out = self.run_cli("report", "retry", cwd=easy)
-            self.assertIn(f"재검토 {n}/3", out)
+            self.assertIn(f"재검토 {n}/2 기록됨. 지금 다음을", out)
         _, out = self.run_cli("report", "retry", cwd=easy)
         self.assertIn("ctfm report blocked", out)
         with self.assertRaises(SystemExit):
             self.run_cli("report", "blocked", cwd=easy)
-        (easy / "BLOCKED.md").write_text("## 막힌 지점\nlibc leak이 안 됨\n" + "상세 설명 " * 600)
+        (easy / "BLOCKED.md").write_text("claude가 쓴 것")  # 상대의 파일은 보내지 않는다
+        with self.assertRaises(SystemExit):
+            self.run_cli("report", "blocked", cwd=easy)
+        (easy / "BLOCKED.codex.md").write_text("## 막힌 지점\nlibc leak이 안 됨\n" + "상세 설명 " * 600)
         _, out = self.run_cli("report", "blocked", cwd=easy / ".claude")  # 하위 디렉토리에서 호출해도 문제를 찾는다
         self.assertIn("멈추지 말고", out)
         ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
-        self.assertEqual((ch["status"], ch["retries"], ch["blocked_count"]), ("blocked", 0, 1))
+        self.assertEqual((ch["status"], ch["peer"]["retries"], ch["retries"], ch["blocked_count"]), ("blocked", 0, 0, 1))
+        self.assertIn("(codex)", "".join(self.mock.webhook))
         blocked_msgs = [m for m in self.mock.webhook if "insight 요청" in m or "상세 설명" in m]
         self.assertGreater(len(blocked_msgs), 1)  # 2000자 초과분은 나눠서 전송
         self.assertTrue(all(len(m) <= 2000 for m in self.mock.webhook))
         self.assertIn("libc leak이 안 됨", "".join(self.mock.webhook))
+        # 포럼 채널: 문제마다 포스트 하나에 모이고, `ctfm notify`는 대회 공통 포스트로 간다
+        self.assertEqual([t["name"] for t in self.mock.threads.values()], ["[pwn] easy one"])
+        self.assertEqual(len(self.mock.threads["1000"]["messages"]), len(self.mock.webhook))
+        self.run_cli("notify", "관리 세션 공지")
+        self.assertEqual(self.mock.threads["1001"], {"name": "TESTCTF", "messages": ["관리 세션 공지"]})
+        del self.mock.threads["1001"]  # 사용자가 포스트를 지웠으면 새로 만든다
+        self.assertEqual(self.run_cli("notify", "다시")[0], 0)
+        self.assertEqual(self.mock.threads["1001"]["messages"], ["다시"])
         # blocked는 끝이 아님: 슬롯 유지, 멈춤은 계속 차단
         self.poll()
         self.assertEqual(self.status()["late ai"], "queued")
         _, out = self.run_cli("hook", "stop", stdin=hook_in)
         self.assertEqual(json.loads(out)["decision"], "block")
 
-        # ask: 1회만 멈춤 허용
+        # ask: codex가 물은 것이면 claude는 계속 풀고, `ctfm send`로 답하면 running으로 돌아간다
+        self.run_cli("report", "ask", "--question", "원격이 죽어 있음", cwd=easy)
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(json.loads(out)["decision"], "block")
+        self.assertEqual(self.status()["easy one"], "waiting_user")
+        self.run_cli("send", "--agent", "codex", "easy one", "다시 켰다")  # 옵션은 문제 이름 앞에
+        self.assertEqual(self.status()["easy one"], "running")
+        codex_screen, claude_screen = (tmux.capture(p["pane"]) for p in (ch["peer"], ch))
+        self.assertIn("다시 켰다", codex_screen)
+        self.assertNotIn("다시 켰다", claude_screen)
+
+        # ask: claude가 물은 것이면 1회만 멈춤 허용
+        os.environ["CTFM_AGENT"] = "claude"
+        self.addCleanup(os.environ.pop, "CTFM_AGENT", None)
         self.run_cli("report", "ask", "--question", "팀 토큰이 필요함", cwd=easy)
         self.assertEqual(self.status()["easy one"], "waiting_user")
         self.assertIn("팀 토큰이 필요함", self.mock.webhook[-1])
@@ -165,9 +203,10 @@ class Flow(unittest.TestCase):
         _, out = self.run_cli("hook", "stop", stdin=hook_in)
         self.assertEqual(json.loads(out)["decision"], "block")
 
-        # solved: 알림, 멈춤 허용, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn
+        # solved: 알림, 멈춤 허용, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn. 동시 풀이의 상대에게는 종료 메시지
         self.run_cli("report", "solved", "--flag", "flag{real}", cwd=easy)
         self.assertIn("flag{real}", self.mock.webhook[-1])
+        self.assertIn("claude 세션이 이 문제의 플래그를 얻었다", tmux.capture(ch["peer"]["pane"]).replace("\n", ""))
         _, out = self.run_cli("hook", "stop", stdin=hook_in)
         self.assertEqual(out, "")
         self.poll()
@@ -266,6 +305,65 @@ class Flow(unittest.TestCase):
         self.assertEqual(run_housekeep(3).get("nudges"), 0)
 
 
+    def test_effort_escalation(self):
+        """재검토 2회째: claude의 멈춤을 한 번 허용하고, 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
+        with self.store.locked() as (cfg, st):
+            cfg.update(idle_nudge=0, max_agents=1, agent_cmd="sh -c 'echo ready; exec sleep 600' agent")
+        self.poll()
+        wanted = self.chal_dir("wanted")
+        hook_in = json.dumps({"cwd": str(wanted)})
+        _, out = self.run_cli("report", "retry", cwd=wanted)
+        self.assertIn("재검토 1/2 기록됨. 지금 다음을", out)
+        _, out = self.run_cli("report", "retry", cwd=wanted)
+        self.assertIn("effort를 max로", out)
+        self.assertIn("이 턴을 여기서 끝낸다", out)
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(out, "")  # 턴이 끝나야 슬래시 명령을 넣을 수 있다
+
+        ch = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            daemon.housekeep(self.store)
+            ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "wanted")
+            if "escalate" not in ch:
+                break
+            time.sleep(0.5)
+        self.assertEqual((ch.get("escalate"), ch["effort"]), (None, "max"))
+        screen = tmux.capture(ch["pane"], 60).replace("\n", "")
+        for expected in ("/effort max", "/compact", "처음부터 엄밀하게 다시 본다"):
+            self.assertIn(expected, screen)
+        self.assertLess(screen.index("/effort max"), screen.index("/compact"))
+        self.assertIn("ESCALATED crypto/wanted", self.store.events_path.read_text())
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)
+        self.assertEqual(json.loads(out)["decision"], "block")
+        _, out = self.run_cli("report", "retry", cwd=wanted)  # 3번째 막힘: 사용자 알림 단계
+        self.assertIn("ctfm report blocked", out)
+
+        # 알림 뒤 다음 사이클에서는 이미 max라 다시 올리지 않는다
+        (wanted / "BLOCKED.md").write_text("막힘")
+        self.run_cli("report", "blocked", cwd=wanted)
+        self.run_cli("report", "retry", cwd=wanted)
+        _, out = self.run_cli("report", "retry", cwd=wanted)
+        self.assertIn("재검토 2/2 기록됨. 지금 다음을", out)
+
+    def test_dual_exit(self):
+        """동시 풀이는 한쪽이 끝나도 슬롯을 유지하고, 둘 다 끝나야 exited가 된다."""
+        with self.store.locked() as (cfg, st):
+            cfg.update(max_agents=1, priority=["easy one"], agent_cmd="sh -c 'exit 3' agent")
+        self.poll()
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+        self.assertEqual((ch["agent"], ch["peer"]["agent"]), ("claude", "codex"))
+        self.assertNotEqual(ch["exit_file"], ch["peer"]["exit_file"])
+        deadline = time.time() + 10
+        while time.time() < deadline and self.status()["easy one"] in state.ACTIVE:
+            time.sleep(0.3)
+            with contextlib.redirect_stdout(io.StringIO()):
+                daemon.housekeep(self.store)
+        self.assertEqual(self.status()["easy one"], "exited")
+        events = self.store.events_path.read_text()
+        self.assertIn("EXITED pwn/easy_one[codex]", events)
+        self.assertIn("EXITED pwn/easy_one[claude]", events)
+
     def test_koth(self):
         """KotH: 분류, 최우선 spawn, 사이트 접근 위임, 모델 체인 자동 전환, 라운드에 따른 fast 조정."""
         self.mock.add(9, "Hill Climb", "King of the Hill", value=1000, solves=0)
@@ -290,6 +388,7 @@ class Flow(unittest.TestCase):
         self.assertNotIn("DISCORD_WEBHOOK_URL", text)
         self.assertIn("King of the Hill", (chal / "AGENTS.md").read_text())
         self.assertIn("CTF_ACCESS.env", (chal / "AGENTS.md").read_text())
+        self.assertIn("상대 전략 분석 subagent", (chal / "AGENTS.md").read_text())
         self.assertEqual((chal / "CLAUDE.md").read_text(), "@AGENTS.md\n")  # claude는 CLAUDE.md, codex는 AGENTS.md를 읽는다
 
         def watch_until(pred, seconds=8):
@@ -324,14 +423,52 @@ class Flow(unittest.TestCase):
         self.assertIn("fast 켬", self.store.events_path.read_text())
         self.assertIn("/fast", tmux.capture(hill["window_id"], 40))
 
-        self.run_cli("report", "round", "--round", "4", cwd=chal)
+        self.run_cli("report", "round", "--round", "5", "--summary", "R4 2위(+120)\nR5: 탐색 깊이 3으로 제출 예정", cwd=chal)
+        self.assertIn("라운드 5\nR4 2위(+120)", self.mock.webhook[-1])  # 라운드마다 진행 요약이 그 문제의 포스트로 간다
+        self.assertEqual([t["name"] for t in self.mock.threads.values()], ["[koth] Hill Climb"])
+        with self.assertRaises(SystemExit):
+            self.run_cli("report", "round", "--round", "6", cwd=chal)
         self.run_cli("kill", "Hill Climb")
         with self.store.locked() as (cfg, st):
             cfg["agent_cmd"] = "sh -c 'echo \"  GPT-6.2-Astra high fast · /x · Ready\"; exec sleep 600' agent"
             st["challenges"]["9"].update(chain_idx=0, agent="codex", model="gpt-6.2-astra", fast_sent=0)
         self.run_cli("spawn", "Hill Climb", "--now")
-        watch_until(lambda c: c.get("fast_sent"))
-        self.assertIn("fast 끔 (라운드 4", self.store.events_path.read_text())
+        hill = watch_until(lambda c: c.get("fast_sent") and c.get("peer"))
+        self.assertIn("fast 끔 (라운드 5", self.store.events_path.read_text())
+
+        # 전환 준비: fast_rounds(4) 라운드부터 체인의 다음 모델을 후임으로 오른쪽 pane에 띄운다
+        peer = hill["peer"]
+        self.assertEqual((peer["agent"], peer["model"], peer["effort"], peer["role"]), ("claude", "claude-mythos-5-2", "high", "successor"))
+        self.assertEqual(self.pane_count("Hill Climb"), 2)
+        self.assertIn("SUCCESSOR koth/Hill_Climb", self.store.events_path.read_text())
+        hook_in = json.dumps({"cwd": str(chal)})
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)  # 후임은 준비를 마칠 때까지 멈추지 못한다
+        self.assertIn("인수 준비", json.loads(out)["reason"])
+        with self.assertRaises(SystemExit):  # 메인(codex)은 ready를 보고할 수 없다
+            self.run_cli("report", "ready", "--summary", "x", cwd=chal)
+        os.environ["CTFM_AGENT"] = "claude"
+        self.addCleanup(os.environ.pop, "CTFM_AGENT", None)
+        with self.assertRaises(SystemExit):  # 후임은 라운드를 보고하지 않는다
+            self.run_cli("report", "round", "--round", "6", "--summary", "x", cwd=chal)
+        self.run_cli("report", "ready", "--summary", "기준 후보 로컬 재현 완료", cwd=chal)
+        self.assertIn("기준 후보 로컬 재현 완료", self.mock.webhook[-1])
+        self.assertIn("READY koth/Hill_Climb[claude]", self.store.events_path.read_text())
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)  # 준비를 마치면 전환을 기다리며 멈춘다
+        self.assertEqual(out, "")
+        os.environ.pop("CTFM_AGENT")
+
+        # 전환: 후임이 메인이 되고 Astra pane은 종료된다
+        self.run_cli("handover", "Hill Climb")
+        hill = self.store.state()["challenges"]["9"]
+        self.assertEqual((hill["agent"], hill["model"], hill["effort"], hill["chain_idx"]), ("claude", "claude-mythos-5-2", "high", 1))
+        self.assertNotIn("peer", hill)
+        self.assertNotIn("role", hill)
+        self.assertEqual(self.pane_count("Hill Climb"), 1)
+        self.assertIn("이제 네가 이 문제의 메인 에이전트다", tmux.capture(hill["pane"], 60).replace("\n", ""))
+        self.assertIn("HANDOVER koth/Hill_Climb gpt-6.2-astra → claude-mythos-5-2", self.store.events_path.read_text())
+        self.assertIn("메인 전환", self.mock.webhook[-1])
+        with self.assertRaises(SystemExit):
+            self.run_cli("handover", "Hill Climb")
 
         # Stop hook은 KotH용 문구로 차단한다
         _, out = self.run_cli("hook", "stop", stdin=json.dumps({"cwd": str(chal)}))

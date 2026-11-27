@@ -69,7 +69,7 @@ if [ -f "$ENV_FILE" ] && grep -q '^DISCORD_WEBHOOK_URL=.' "$ENV_FILE"; then
   ok "DISCORD_WEBHOOK_URL 설정됨 ($ENV_FILE)"
 else
   url=""
-  read -r -p "  Discord webhook URL (건너뛰려면 Enter): " url || true
+  read -r -p "  Discord 포럼 채널 webhook URL (건너뛰려면 Enter): " url || true
   if [ -n "$url" ]; then
     printf 'DISCORD_WEBHOOK_URL=%s\n' "$url" >> "$ENV_FILE"
     chmod 600 "$ENV_FILE"

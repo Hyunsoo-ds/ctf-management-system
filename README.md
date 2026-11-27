@@ -17,11 +17,12 @@
 | 🛰️ **자동 수집** | 30초마다 문제 사이트를 폴링해 새 문제의 설명과 첨부 파일을 받고 압축을 풉니다 |
 | 🪟 **병렬 풀이** | 분야별 tmux 세션(`pwn` `web` `rev` `crypto` `ai` `misc` `koth`)에 문제당 윈도우 하나씩 에이전트를 띄웁니다 |
 | 🎯 **우선순위** | 지정한 문제 → solve 많은 순 → 배점 낮은 순으로 슬롯(`--max-agents`)을 채웁니다 |
-| 🚩 **알림** | 플래그 획득, 막힘(insight 요청), 질문을 Discord webhook으로 보냅니다 |
-| 🧱 **포기 없음** | 막히면 재검토 3회 → 사용자에게 막힌 지점 설명 → 계속 풀이. 플래그 없이 끝나지 않습니다 |
+| 🚩 **알림** | 플래그 획득, 막힘(insight 요청), 질문, KotH 라운드 요약을 Discord 포럼 채널 webhook으로 보냅니다. 문제마다 포스트 하나에 모입니다 |
+| 🧱 **포기 없음** | 1번 막히면 재검토 → 2번째는 effort를 max로 올리고 compact 후 엄밀한 재검토 → 3번째는 사용자에게 막힌 지점 설명 → 계속 풀이. 플래그 없이 끝나지 않습니다 |
+| 🏁 **동시 풀이** | pwn · rev 문제는 한 윈도우의 좌우 pane에 Codex(`gpt-6-sol` medium fast)와 Claude(`claude-opus-5` xhigh)를 함께 띄워 먼저 푸는 쪽을 씁니다 |
 | 🧭 **관리 세션** | 스킬을 호출한 세션이 관리자가 되어 "X 끝내", "Y 먼저", "Z한테 이거 전해" 같은 지시를 처리합니다 |
 | 🤖 **에이전트 선택** | 풀이 에이전트로 Claude Code 또는 Codex(`insane-codex`)를 문제별로 고를 수 있습니다 |
-| 👑 **King of the Hill** | KotH 문제를 자동 분류해 고급 모델(Astra 6.2 fast → Mythos 5.2 → Opus 5.5)로 최우선 배정합니다 |
+| 👑 **King of the Hill** | KotH 문제를 자동 분류해 고급 모델로 최우선 배정합니다. 초반 4라운드는 Astra 6.2 fast, 이후 Mythos 5.2(막히면 Opus 5.5)가 넘겨받습니다 |
 
 > [!IMPORTANT]
 > **플래그는 절대 자동 제출하지 않습니다.** 사이트 어댑터는 GET만 쓰고, jeopardy 에이전트는 사이트에 접근하지 않습니다.
@@ -128,7 +129,7 @@ cd ~/ctf-management-system
 | 1/6 의존성 확인 | python3(안전한 tar 해제 지원 여부까지), tmux, claude, 7z, insane-codex |
 | 2/6 풀이용 스킬 | `solve-challenge`, `ctf-*` 스킬이 없으면 `npx skills add ljagiello/ctf-skills -g` 실행을 제안 |
 | 3/6 스킬 등록 | `~/.claude/skills/setup-ctf` → 저장소의 `setup-ctf/` 심볼릭 링크 |
-| 4/6 Discord | webhook URL을 받아 저장소 `.env`에 저장 (권한 600) |
+| 4/6 Discord | **포럼 채널**의 webhook URL을 받아 저장소 `.env`에 저장 (권한 600). 일반 텍스트 채널 webhook은 포스트를 만들 수 없어 쓸 수 없습니다 |
 | 5/6 권한 확인 창 | `~/.claude/settings.json`에 `skipDangerousModePermissionPrompt: true` 추가 제안 |
 | 6/6 테스트 | mock CTFd와 격리된 tmux 서버로 전체 흐름 테스트 (약 15초) |
 
@@ -179,7 +180,7 @@ mkdir ~/ctf/MyCTF2026 && cd ~/ctf/MyCTF2026 && claude
 | `--max-agents` | 동시에 도는 풀이 에이전트 수 | `8` |
 | `--priority` | 먼저 풀 문제 이름 (쉼표 구분, 아직 안 열린 문제도 가능) | — |
 | `--agent` | 기본 풀이 에이전트 `claude` \| `codex` | `claude` |
-| `--model` / `--codex-model` | 각 에이전트의 모델 | `claude-opus-5` / `gpt-5.6-sol` |
+| `--model` / `--codex-model` | 각 에이전트의 모델 (effort는 `ctfm set effort` / `codex-effort` / `codex-fast`) | `claude-opus-5` xhigh / `gpt-6-sol` medium fast |
 
 CTFd가 아닌 사이트라면 관리 세션이 사이트를 분석해 즉석에서 어댑터를 작성합니다.
 
@@ -189,7 +190,7 @@ CTFd가 아닌 사이트라면 관리 세션이 사이트를 분석해 즉석에
 tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 ```
 
-- 윈도우 하나가 문제 하나입니다. 이름 앞 표시: `✔` 플래그 획득 · `!` 막힘 알림 보냄(계속 풀이 중) · `?` 답을 기다림
+- 윈도우 하나가 문제 하나입니다. pwn · rev 윈도우는 pane이 둘입니다(왼쪽 Codex, 오른쪽 Claude). 이름 앞 표시: `✔` 플래그 획득 · `!` 막힘 알림 보냄(계속 풀이 중) · `?` 답을 기다림
 - tmux 안에서 `prefix + w`로 전체 세션/윈도우를 한 화면에서 고를 수 있습니다.
 - 윈도우에 직접 입력해 힌트를 줘도 됩니다.
 
@@ -215,7 +216,7 @@ tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 2. **로컬 solver를 먼저** 완성한 뒤 원격에서 진짜 플래그를 얻습니다. 배포본의 가짜 플래그는 보고하지 않습니다.
 3. **문제 사이트에 접근하지 않습니다.** 제출 · 힌트 해제 · API 호출 모두 금지.
 4. **먼저 물어볼 것**: 토큰/계정 필요, 시도 횟수 제한, rate limit · 대량 요청, 잠긴 힌트, 원격 서버 다운.
-5. **막히면** `ctfm report retry` → 문제를 처음부터 다시 읽기 → 풀이 논리 재검증 → 놓친 공격 표면 점검. 3회 후에도 진전이 없으면 배경지식 없는 사람도 이해할 수 있게 `BLOCKED.md`를 쓰고 알림. **그리고 계속 풉니다.**
+5. **막히면** `ctfm report retry` → 문제를 처음부터 다시 읽기 → 풀이 논리 재검증 → 놓친 공격 표면 점검. 2번째 막힘에서 Claude는 effort를 `max`로 올리고 컨텍스트를 compact한 뒤 처음부터 엄밀하게 다시 봅니다. 3번째 막힘에서는 배경지식 없는 사람도 이해할 수 있게 `BLOCKED.md`를 쓰고 알림. **그리고 계속 풉니다.**
 
 ### 👑 King of the Hill
 
@@ -224,9 +225,12 @@ tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 | | |
 |---|---|
 | 대기 순서 | 모든 문제보다 먼저 (초반 라운드 점수 확보가 핵심) |
-| 모델 체인 | `gpt-6.2-astra`(codex) → `claude-mythos-5-2` → `claude-opus-5-5`. 사용량 한도나 안전 차단이 보이면 자동으로 다음 모델로 전환 |
-| fast | Astra는 라운드 3까지 `/fast` 켬, 라운드 4부터 끔 (에이전트가 보고한 라운드 기준) |
+| 모델 | 라운드 4까지 `gpt-6.2-astra`(codex, fast) → 이후 `claude-mythos-5-2`(막히면 `claude-opus-5-5`). 사용량 한도나 안전 차단이 보이면 자동으로 다음 모델로 전환 |
+| 메인 전환 | 라운드 4가 시작되면 Mythos 5.2(high)가 옆 pane에서 Astra의 작업을 확인하며 인수 준비 → 준비가 끝나면 관리 세션이 전환하고 Astra 세션 종료 |
+| fast | Astra는 메인을 맡는 라운드 4까지 `/fast` 켬 (에이전트가 보고한 라운드 기준) |
 | 사이트 접근 | 문제 디렉토리의 `CTF_ACCESS.env`(권한 600)로 그 문제의 라운드·점수판 조회 위임 |
+| 라운드 요약 | 라운드가 바뀔 때마다 직전 결과, 제출한 후보, 이번 계획을 Discord의 그 문제 포스트로 전송 |
+| 경쟁형 문제 | 다른 팀과 겨루는 문제면 메인이 Claude로 전환된 뒤부터 상대 전략을 분석하는 subagent를 병렬로 돌려 대응 방안을 후보에 반영 |
 | 제출 | 매 라운드 반드시 제출. 라운드 1~3은 간단하지만 확실한 규칙 기반 후보로 점수부터 확보 ([`KOTH_STRATEGY.md`](setup-ctf/templates/KOTH_STRATEGY.md)) |
 
 ### Claude vs Codex

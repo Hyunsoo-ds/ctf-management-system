@@ -3,6 +3,7 @@ import argparse
 import copy
 import fcntl
 import json
+import os
 import shlex
 import sys
 import time
@@ -12,24 +13,31 @@ from pathlib import Path
 
 from . import adapters, daemon, intake, tmux
 from .notify import discord
-from .state import ACTIVE, CATEGORIES, CTFM_BIN, KOTH_DEFAULTS, Store, find_root, label, queue_key, resolve, write_env
+from .state import (ACTIVE, CATEGORIES, CTFM_BIN, KOTH_DEFAULTS, Store, find_root, label, pane_label, panes, queue_key,
+                    resolve, screen_order, write_env)
 
-RETRY_LIMIT = 3
+RETRY_LIMIT = 2  # 2회째에 claude는 effort를 max로 올려 다시 보고, 3번째 막힘은 사용자 알림(blocked)이다
 RETRY_CHECKLIST = """재검토 {n}/{limit} 기록됨. 지금 다음을 순서대로 수행하라.
 1. CHALLENGE.md와 배포 파일을 처음부터 다시 읽는다 (기억에 의존하지 않는다).
 2. STATE.md의 풀이 논리를 단계별로 다시 따라가며 [추정] 전제를 실제로 확인해 틀린 곳을 찾는다.
 3. novel 표면을 점검한다: 아직 안 본 파일/함수/엔드포인트, 제목·설명·태그의 힌트, 버전과 설정 특이점, 로컬과 원격의 차이.
 4. 새 가설을 세우고 풀이를 재개한다."""
+ESCALATE_NOTICE = """재검토 {n}/{limit} 기록됨. 이번에는 effort를 max로 올리고 컨텍스트를 compact한 뒤 처음부터 엄밀하게 다시 본다.
+1. STATE.md를 지금 최신으로 갱신한다: 풀이 논리, 각 전제의 [검증됨]/[추정], 버린 접근과 이유, 원격 접속 정보. compact 뒤에는 이 파일이 기준이다.
+2. 갱신했으면 이 턴을 여기서 끝낸다(이번에 한해 멈춤이 허용된다). 다른 작업을 더 하지 않는다.
+3. 턴이 끝나면 effort 변경과 compact가 자동으로 실행되고 재검토 지시가 입력된다. 그 지시를 따라 재개한다."""
 STOP_REASON = """플래그를 아직 얻지 못했다. 이 작업은 플래그를 얻어야 끝나며 포기는 없다. 지금 멈추지 말고 이어서 진행하라.
 - 다음 가설이 있으면 바로 실행한다. 백그라운드 작업을 기다리는 중이면 그동안 다른 가설을 검증한다.
-- 가설이 없으면 AGENTS.md 8번(막혔을 때) 절차를 수행한다. 재검토를 3회 했다면 9번(insight 요청) 후 계속한다.
+- 가설이 없으면 AGENTS.md 8번(막혔을 때) 절차를 수행한다. 재검토를 2회 했다면 9번(insight 요청) 후 계속한다.
 - 토큰, 시도 횟수 제한, rate limit 때문에 사용자 확인이 필요한 경우에만 `ctfm report ask`로 질문하고 멈출 수 있다.
 - 플래그를 얻었다면 `ctfm report solved --flag '<flag>'`를 실행한다."""
 KOTH_STOP_REASON = """KotH는 대회가 끝날 때까지 점수를 올리는 문제라 끝이 없다. 지금 멈추지 말고 이어서 진행하라.
-- 현재 라운드를 확인해 바뀌었으면 `ctfm report round --round <번호>`로 보고한다.
+- 현재 라운드를 확인해 바뀌었으면 `ctfm report round --round <번호> --summary '<진행 요약>'`으로 보고한다(AGENTS.md 4번).
 - 이번 라운드에 아직 제출하지 않았다면 마감 전에 검증된 최선의 후보를 먼저 제출한다(AGENTS.md 7.1).
 - 다음 라운드를 위한 개선을 계속한다. 아이디어가 없으면 AGENTS.md 6번 절차를 따른다.
 - 제출 절차가 없거나 제출 제한 때문에 사용자 확인이 필요하면 `ctfm report ask`로 질문하고 멈출 수 있다."""
+SUCCESSOR_STOP_REASON = """인수 준비가 아직 끝나지 않았다. AGENTS.md 8번의 준비 항목을 마저 수행하라.
+끝났으면 `ctfm report ready --summary '<준비 내용 요약>'`을 실행한다. 그 뒤에는 전환 메시지를 기다리며 멈출 수 있다."""
 
 
 def store_here():
@@ -47,6 +55,20 @@ def current_challenge(st, store, cwd):
         if cwd == chal_dir or chal_dir in cwd.parents:
             return ch
     return None
+
+
+def calling_pane(ch):
+    """`ctfm report`를 부른 쪽의 pane 기록. pane이 둘이면 claude는 실행 스크립트가 넣은 CTFM_AGENT로 구분되고,
+    codex의 셸은 공유 app-server에서 돌아 그 변수가 없다."""
+    return agent_pane(ch, os.environ.get("CTFM_AGENT") or "codex")
+
+
+def agent_pane(ch, agent):
+    return next((p for p in panes(ch) if p["agent"] == agent), ch)
+
+
+def live_panes(ch, agent=None):
+    return [p for p in panes(ch) if not p.get("exited") and agent in (None, p["agent"])]
 
 
 # ── 관리 세션용 ──────────────────────────────────────────────────────────────
@@ -74,7 +96,8 @@ def cmd_init(a):
     with store.locked() as (cfg, st):
         cfg.update(update)
         for key, default in (("start", 0), ("max_agents", 8), ("priority", []), ("agent", "claude"),
-                             ("model", "claude-opus-5"), ("codex_model", "gpt-5.6-sol"), ("poll_interval", 30),
+                             ("model", "claude-opus-5"), ("effort", "xhigh"), ("codex_model", "gpt-6-sol"),
+                             ("codex_effort", "medium"), ("codex_fast", 1), ("poll_interval", 30),
                              ("idle_nudge", 120), ("category_map", {}), ("koth", KOTH_DEFAULTS)):
             cfg.setdefault(key, copy.deepcopy(default))
     env = dict(e.split("=", 1) for e in a.env)
@@ -140,19 +163,15 @@ def daemon_alive(store):
         return True
 
 
-def agent_desc(cfg, agent):
-    model = cfg["model"] if agent == "claude" else (cfg.get("codex_model") or "codex 설정 기본값")
-    return f"{agent}({model})"
-
-
 def cmd_status(a):
     store = store_here()
     cfg, st = store.config(), store.state()
     chals = list(st["challenges"].values())
     active = sum(c["status"] in ACTIVE for c in chals)
     queued = sorted((c for c in chals if c["status"] == "queued"), key=lambda c: queue_key(c, cfg["priority"]))
+    default = daemon.describe(cfg, {"category": ""}, {"agent": cfg.get("agent", "claude")})
     print(f"슬롯 {active}/{cfg['max_agents']} · 대기 {len(queued)} · 풀림 {sum(c['status'] == 'solved' for c in chals)}"
-          f" · 데몬 {'실행 중' if daemon_alive(store) else '꺼져 있음'} · 기본 에이전트 {agent_desc(cfg, cfg.get('agent', 'claude'))}")
+          f" · 데몬 {'실행 중' if daemon_alive(store) else '꺼져 있음'} · 기본 에이전트 {default} (pwn·rev는 codex와 claude 동시)")
     if queued:
         print("대기 순서: " + ", ".join(label(c) for c in queued))
     for category in CATEGORIES:
@@ -162,15 +181,16 @@ def cmd_status(a):
         print(f"\n[{category}] 보기: tmux attach -t {tmux.session_name(store.root, category)}")
         for c in sorted(rows, key=lambda c: c["seq"]):
             extra = []
-            if c.get("agent"):
-                extra.append(f"{c['agent']} {c['model']}" if c.get("model") else c["agent"])
+            if c.get("agent"):  # 동시 풀이는 화면 배치(왼쪽 codex, 오른쪽 claude) 순서로
+                extra.append(" | ".join(
+                    daemon.describe(cfg, c, p) + (f" 재검토 {p['retries']}/{RETRY_LIMIT}" if c["status"] in ACTIVE else "")
+                    + (f" 유휴 재개 {p['nudges']}회" if p.get("nudges") else "") + (" 종료됨" if p.get("exited") and c.get("peer") else "")
+                    + ((" 후임(준비 완료)" if p.get("ready") else " 후임(인수 준비 중)") if p.get("role") == "successor" else "")
+                    for p in screen_order(c)))
             if c.get("round"):
                 extra.append(f"라운드 {c['round']}")
             if c["status"] in ACTIVE:
                 extra.append(f"{int((time.time() - c['spawned_at']) / 60)}분 경과")
-                extra.append(f"재검토 {c['retries']}/{RETRY_LIMIT}")
-            if c.get("nudges"):
-                extra.append(f"유휴 재개 {c['nudges']}회")
             if c.get("blocked_count"):
                 extra.append(f"막힘 알림 {c['blocked_count']}회")
             if c.get("site_solved") and c["status"] != "site_solved":
@@ -192,8 +212,10 @@ def cmd_spawn(a):
             raise SystemExit(f"{label(ch)} 는 아직 수집되지 않음 ({ch.get('error') or '다음 폴링에서 수집'})")
         if a.resume and a.agent and ch.get("agent") and a.agent != ch["agent"]:
             raise SystemExit(f"{label(ch)} 는 {ch['agent']}로 풀던 문제라 {a.agent}로 이어 갈 수 없음 (--resume 없이 새로 시작)")
-        if a.agent:
-            ch["agent"] = a.agent
+        if a.agent == "dual":
+            ch["dual"] = True
+        elif a.agent:
+            ch.update(agent=a.agent, dual=False)
             ch.pop("model", None)
         if a.model:
             ch["model"] = a.model
@@ -216,6 +238,20 @@ def cmd_kill(a):
         store.emit("KILLED", f"{label(ch)} 종료됨. 이어서 하려면 `ctfm spawn {ch['slug']} --now --resume`")
 
 
+def cmd_handover(a):
+    """KotH: 인수 준비를 하던 후임을 메인으로 올리고 이전 메인(Astra) 세션을 종료한다."""
+    store = store_here()
+    with store.locked() as (cfg, st):
+        ch = resolve(st["challenges"], a.challenge)
+        peer = ch.get("peer") or {}
+        if ch["status"] not in ACTIVE or peer.get("role") != "successor" or peer.get("exited"):
+            raise SystemExit(f"{label(ch)} 에 인수 준비 중인 후임 에이전트가 없음")
+        prev, early = ch.get("model"), "" if peer.get("ready") else " (후임이 준비 완료를 보고하기 전)"
+        daemon.promote(store, ch)
+        store.emit("HANDOVER", f"{label(ch)} {prev} → {ch['model']} 전환 완료, {prev} 세션 종료{early}")
+    discord(store, f"🔄 **[{ch['category']}] {ch['name']}** 메인 전환: {prev} → {ch['model']}{early}", ch)
+
+
 def cmd_prioritize(a):
     store = store_here()
     with store.locked() as (cfg, st):
@@ -231,7 +267,8 @@ def cmd_send(a):
         for ch in targets:
             if ch["status"] not in ACTIVE:
                 raise SystemExit(f"{label(ch)} 는 실행 중이 아님 ({ch['status']})")
-            tmux.send_text(ch["window_id"], a.message)
+            for p in live_panes(ch, a.agent):
+                tmux.send_text(p["pane"], a.message)
             if ch["status"] == "waiting_user":  # 답을 받았다. claude는 Stop hook이 이미 바꿨고, hook이 없는 codex는 여기서 바꾼다
                 ch["status"] = "running"
                 tmux.mark(ch)
@@ -241,7 +278,9 @@ def cmd_send(a):
 def cmd_peek(a):
     store = store_here()
     ch = resolve(store.state()["challenges"], a.challenge)
-    print(tmux.capture(ch["window_id"], a.lines))
+    for p in screen_order(ch):
+        if a.agent in (None, p["agent"]):
+            print((f"── {p['agent']} ──\n" if ch.get("peer") else "") + tmux.capture(p["pane"], a.lines))
 
 
 def cmd_set(a):
@@ -255,7 +294,10 @@ def cmd_set(a):
         elif a.key == "agent" and a.value not in daemon.AGENTS:
             raise SystemExit(f"agent는 {'|'.join(daemon.AGENTS)} 중 하나")
         else:
-            cfg[a.key.replace("-", "_")] = a.value if a.key in ("model", "codex-model", "agent") else int(a.value)
+            if a.key == "codex-effort" and a.value not in daemon.EFFORT_MENU:
+                raise SystemExit(f"codex-effort는 {'|'.join(daemon.EFFORT_MENU)} 중 하나")
+            text = ("model", "codex-model", "agent", "effort", "codex-effort")
+            cfg[a.key.replace("-", "_")] = a.value if a.key in text else int(a.value)
         print(json.dumps(cfg, ensure_ascii=False, indent=1))
 
 
@@ -293,41 +335,63 @@ def cmd_report(a):
         ch = current_challenge(st, store, Path.cwd())
         if ch is None:
             raise SystemExit("이 디렉토리는 등록된 문제 디렉토리가 아님")
-        name = f"[{ch['category']}] {ch['name']}"
+        p = calling_pane(ch)
+        who = pane_label(ch, p)
+        name = f"[{ch['category']}] {ch['name']}" + (f" ({p['agent']})" if ch.get("peer") else "")
         if a.kind == "solved":
             ch.update(status="solved", flag=a.flag)
-            store.emit("SOLVED", f"{label(ch)} flag={a.flag}", echo=False)
+            store.emit("SOLVED", f"{who} flag={a.flag}", echo=False)
             message = f"🚩 **{name}** 플래그 획득\n`{a.flag}`"
+            for other in live_panes(ch):
+                if other is not p:  # 동시 풀이의 상대는 더 풀 이유가 없다
+                    tmux.send_text(other["pane"], f"{p['agent']} 세션이 이 문제의 플래그를 얻었다. 이 문제는 끝났다. 지금 하던 작업을 멈추고 턴을 끝내라.")
             print("기록됨 (Discord 알림 전송). 플래그 획득 경로를 채팅에 요약하라. 사이트 제출은 사용자가 한다.")
         elif a.kind == "retry":
-            if ch["retries"] >= RETRY_LIMIT:
+            if p["retries"] >= RETRY_LIMIT:
                 print(f"이미 재검토를 {RETRY_LIMIT}회 했다. 이제 AGENTS.md 9번 절차를 수행하라: "
                       "BLOCKED.md 작성 → 같은 내용을 채팅에 출력 → `ctfm report blocked` → 멈추지 말고 계속 풀이.")
             else:
-                ch["retries"] += 1
-                store.emit("RETRY", f"{label(ch)} 재검토 {ch['retries']}/{RETRY_LIMIT}", echo=False)
-                print(RETRY_CHECKLIST.format(n=ch["retries"], limit=RETRY_LIMIT))
+                p["retries"] += 1
+                store.emit("RETRY", f"{who} 재검토 {p['retries']}/{RETRY_LIMIT}", echo=False)
+                # 마지막 재검토: claude는 effort를 max로 올려 다시 본다(턴이 끝나면 데몬이 실행). KotH와 codex는 대상이 아니다
+                up = (p["retries"] == RETRY_LIMIT and p["agent"] == "claude" and ch["category"] != "koth"
+                      and daemon.settings(cfg, ch, p)[1] != "max")
+                if up:
+                    p["escalate"] = "pending"
+                print((ESCALATE_NOTICE if up else RETRY_CHECKLIST).format(n=p["retries"], limit=RETRY_LIMIT))
         elif a.kind == "blocked":
-            blocked = store.root / ch["dir"] / "BLOCKED.md"
+            # 동시 풀이는 자기 이름이 붙은 파일만 본다(상대가 쓴 것을 보내지 않게)
+            blocked = store.root / ch["dir"] / (f"BLOCKED.{p['agent']}.md" if ch.get("peer") else "BLOCKED.md")
             if not blocked.is_file() or not blocked.read_text().strip():
-                raise SystemExit("먼저 BLOCKED.md에 막힘 설명을 작성하라 (AGENTS.md 9번 형식).")
-            ch.update(status="blocked", retries=0, blocked_count=ch.get("blocked_count", 0) + 1)
-            store.emit("BLOCKED", f"{label(ch)} insight 요청 {ch['blocked_count']}회째 (BLOCKED.md 참고). 풀이는 계속 진행 중", echo=False)
+                raise SystemExit(f"먼저 {blocked.name}에 막힘 설명을 작성하라 (AGENTS.md 9번 형식).")
+            p["retries"] = 0
+            ch.update(status="blocked", blocked_count=ch.get("blocked_count", 0) + 1)
+            store.emit("BLOCKED", f"{who} insight 요청 {ch['blocked_count']}회째 ({blocked.name} 참고). 풀이는 계속 진행 중", echo=False)
             message = (f"🧱 **{name}** 막힘, insight 요청 ({ch['blocked_count']}회째). 에이전트는 계속 풀이 중\n"
                        f"tmux `{ch.get('tmux_session')}:{ch['slug']}`\n\n{blocked.read_text().strip()}")
             print("알림 전송됨. 재검토 횟수가 0으로 초기화됐다. 멈추지 말고 남은 아이디어부터 다음 재검토 사이클을 시작하라.")
+        elif a.kind == "ready":
+            if p.get("role") != "successor":
+                raise SystemExit("인수 준비 중인 후임 에이전트만 쓰는 명령이다.")
+            p["ready"] = True
+            store.emit("READY", f"{who} 인수 준비 완료: {a.summary}", echo=False)
+            message = f"🔄 **{name}** 후임({p['model']}) 인수 준비 완료\n{a.summary}"
+            print("기록됨 (Discord 알림 전송). 관리 세션이 전환할 때까지 멈추고 기다려라. 전환 메시지가 오면 메인으로서 이어 간다.")
         elif a.kind == "round":
+            if p.get("role") == "successor":
+                raise SystemExit("라운드 보고는 메인 에이전트가 한다. 인수 준비 중에는 하지 않는다.")
             ch["round"] = a.round
             store.emit("ROUND", f"{label(ch)} 라운드 {a.round}", echo=False)
-            print(f"라운드 {a.round} 기록됨. 라운드가 바뀔 때마다 다시 보고하라.")
+            message = f"📊 **{name}** 라운드 {a.round}\n{a.summary}"
+            print(f"라운드 {a.round} 기록됨 (Discord 알림 전송). 라운드가 바뀔 때마다 요약과 함께 다시 보고하라.")
         elif a.kind == "ask":
-            ch["status"] = "waiting_user"
-            store.emit("ASK", f"{label(ch)} 질문 대기: {a.question}", echo=False)
+            ch.update(status="waiting_user", asker=p["agent"])
+            store.emit("ASK", f"{who} 질문 대기: {a.question}", echo=False)
             message = f"❓ **{name}** 사용자 확인 필요\ntmux `{ch.get('tmux_session')}:{ch['slug']}`\n{a.question}"
             print("알림 전송됨. 같은 질문을 채팅에 쓰고 사용자의 답을 기다려라.")
         tmux.mark(ch)
     if message:
-        discord(store, message)
+        discord(store, message, ch)
 
 
 def cmd_hook(a):
@@ -342,10 +406,17 @@ def cmd_hook(a):
             ch = current_challenge(st, store, data["cwd"])
             if ch is None:
                 return
-            if ch["status"] == "waiting_user":
+            p = agent_pane(ch, "claude")  # Stop hook은 claude에만 있다
+            if p.get("escalate"):  # effort 상향 대기 중: 턴이 끝나야 데몬이 /effort, /compact를 입력할 수 있다
+                return
+            if p.get("role") == "successor":  # KotH 후임: 준비를 마치면 전환을 기다리며 멈춘다
+                if not p.get("ready") and ch["status"] in ACTIVE:
+                    print(json.dumps({"decision": "block", "reason": SUCCESSOR_STOP_REASON}, ensure_ascii=False))
+                return
+            if ch["status"] == "waiting_user" and ch.get("asker") != "codex":
                 ch["status"] = "running"  # 질문에 한해 1회만 멈춤 허용
                 tmux.mark(ch)
-            elif ch["status"] in ("running", "blocked"):
+            elif ch["status"] in ACTIVE:  # 동시 풀이의 codex가 질문한 것이면 claude는 계속 푼다
                 reason = KOTH_STOP_REASON if ch["category"] == "koth" else STOP_REASON
                 print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
     except Exception as e:
@@ -365,7 +436,7 @@ def main(argv=None):
     s.add_argument("--priority", help="먼저 풀 문제 이름들 (쉼표 구분)")
     s.add_argument("--model", help="claude 에이전트 모델, 기본 claude-opus-5")
     s.add_argument("--agent", choices=daemon.AGENTS, help="기본 풀이 에이전트, 기본 claude")
-    s.add_argument("--codex-model", help="codex 에이전트 모델, 기본 gpt-5.6-sol")
+    s.add_argument("--codex-model", help="codex 에이전트 모델, 기본 gpt-6-sol")
     s.set_defaults(fn=cmd_init)
 
     sub.add_parser("check", help="로그인과 문제 목록 조회 확인").set_defaults(fn=cmd_check)
@@ -377,13 +448,18 @@ def main(argv=None):
     s.add_argument("challenge")
     s.add_argument("--now", action="store_true", help="슬롯 한도를 무시하고 즉시 시작")
     s.add_argument("--resume", action="store_true", help="이전 대화를 이어서 시작 (claude --continue / codex resume --last)")
-    s.add_argument("--agent", choices=daemon.AGENTS, help="이 문제를 풀 에이전트 (기본은 설정값)")
+    s.add_argument("--agent", choices=[*daemon.AGENTS, "dual"],
+                   help="이 문제를 풀 에이전트 (기본은 설정값, pwn·rev는 dual). dual: codex와 claude를 좌우 pane에 동시에")
     s.add_argument("--model", help="이 문제에만 쓸 모델 (KotH는 자동 모델 전환을 끔)")
     s.set_defaults(fn=cmd_spawn)
 
     s = sub.add_parser("kill", help="풀이 세션 종료 (슬롯 반환)")
     s.add_argument("challenge")
     s.set_defaults(fn=cmd_kill)
+
+    s = sub.add_parser("handover", help="[KotH] 인수 준비를 마친 후임을 메인으로 전환하고 이전 메인 세션을 종료")
+    s.add_argument("challenge")
+    s.set_defaults(fn=cmd_handover)
 
     s = sub.add_parser("prioritize", help="문제를 대기 순서 맨 앞으로")
     s.add_argument("challenges", nargs="+")
@@ -394,16 +470,20 @@ def main(argv=None):
     s.add_argument("challenge", nargs="?")
     s.add_argument("message")
     s.add_argument("--all", action="store_true", help="실행 중인 모든 세션에 전송")
+    s.add_argument("--agent", choices=daemon.AGENTS, help="동시 풀이에서 한쪽 pane에만 전송 (기본은 양쪽)")
     s.set_defaults(fn=cmd_send)
 
     s = sub.add_parser("peek", help="풀이 세션 화면 끝부분 보기")
     s.add_argument("challenge")
     s.add_argument("-n", "--lines", type=int, default=40)
+    s.add_argument("--agent", choices=daemon.AGENTS, help="동시 풀이에서 한쪽 pane만")
     s.set_defaults(fn=cmd_peek)
 
     s = sub.add_parser("set", help="설정 변경")
-    s.add_argument("key", choices=["max-agents", "agent", "model", "codex-model", "poll-interval", "idle-nudge", "category-map"],
-                   help="idle-nudge: 플래그 없이 입력 대기로 멈춘 에이전트를 몇 초 뒤 재개시킬지 (0이면 끔)")
+    s.add_argument("key", choices=["max-agents", "agent", "model", "effort", "codex-model", "codex-effort", "codex-fast",
+                                   "poll-interval", "idle-nudge", "category-map"],
+                   help="effort: claude 시작 effort. codex-effort: low|medium|high. codex-fast: 1/0. "
+                        "idle-nudge: 플래그 없이 입력 대기로 멈춘 에이전트를 몇 초 뒤 재개시킬지 (0이면 끔)")
     s.add_argument("value")
     s.set_defaults(fn=cmd_set)
 
@@ -413,7 +493,7 @@ def main(argv=None):
 
     sub.add_parser("notes-sync", help="CTF_NOTES.md를 모든 문제의 AGENTS.md에 반영").set_defaults(fn=cmd_notes_sync)
 
-    s = sub.add_parser("notify", help="Discord로 메시지 전송")
+    s = sub.add_parser("notify", help="Discord로 메시지 전송 (대회 공통 포스트)")
     s.add_argument("message")
     s.set_defaults(fn=cmd_notify)
 
@@ -424,7 +504,10 @@ def main(argv=None):
     rsub.add_parser("retry")
     r = rsub.add_parser("round", help="[KotH] 현재 라운드 보고")
     r.add_argument("--round", type=int, required=True)
+    r.add_argument("--summary", required=True, help="진행 상황 요약 (Discord로 전송)")
     rsub.add_parser("blocked")
+    r = rsub.add_parser("ready", help="[KotH 후임] 인수 준비 완료 보고")
+    r.add_argument("--summary", required=True)
     r = rsub.add_parser("ask")
     r.add_argument("--question", required=True)
     s.set_defaults(fn=cmd_report)

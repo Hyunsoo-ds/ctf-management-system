@@ -14,11 +14,14 @@ TEMPLATES = SKILL_DIR / "templates"
 
 CATEGORIES = ("koth", "pwn", "web", "rev", "crypto", "ai", "misc")
 ACTIVE = ("running", "blocked", "waiting_user")  # 슬롯을 점유하는 상태
+DUAL_CATEGORIES = ("pwn", "rev")  # 퍼블 경쟁용: 한 윈도우의 좌우 pane에 codex와 claude를 동시에 띄운다
 KOTH_PATTERN = re.compile(r"\bkoth\b|king[\s_-]*of[\s_-]*the[\s_-]*hill", re.I)
-# KotH 기본 모델 체인. 막히면(사용량 한도, 안전 차단) 다음 항목으로 넘어간다. fast_rounds: 이 라운드까지 /fast 켬
+# KotH 기본 모델 체인. 막히면(사용량 한도, 안전 차단) 다음 항목으로 넘어간다.
+# fast_rounds: 초반 모델이 이 라운드까지 /fast로 맡는다. 이 라운드가 시작되면 다음 항목을 후임으로 옆 pane에 띄워
+# 인수 준비를 시키고, 관리 세션이 `ctfm handover`로 전환한다.
 KOTH_DEFAULTS = {"chain": [
-    {"agent": "codex", "model": "gpt-6.2-astra", "fast_rounds": 3},
-    {"agent": "claude", "model": "claude-mythos-5-2"},
+    {"agent": "codex", "model": "gpt-6.2-astra", "fast_rounds": 4},
+    {"agent": "claude", "model": "claude-mythos-5-2", "effort": "high"},
     {"agent": "claude", "model": "claude-opus-5-5"},
 ]}
 
@@ -164,3 +167,17 @@ class Store:
 
 def label(ch):
     return f"{ch['category']}/{ch['slug']}"
+
+
+def panes(ch):
+    """문제의 풀이 pane 기록들. 문제 기록 자체가 주 에이전트의 pane 기록이고, 동시 풀이면 `peer`(codex)가 하나 더 있다."""
+    return [ch, ch["peer"]] if ch.get("peer") else [ch]
+
+
+def screen_order(ch):
+    """화면 배치 순서: codex가 왼쪽, claude가 오른쪽."""
+    return sorted(panes(ch), key=lambda p: p["agent"] != "codex")
+
+
+def pane_label(ch, p):
+    return f"{label(ch)}[{p['agent']}]" if ch.get("peer") else label(ch)

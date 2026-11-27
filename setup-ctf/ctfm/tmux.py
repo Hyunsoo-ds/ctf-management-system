@@ -29,15 +29,28 @@ def session_name(root, category):
     return f"{ctf}-{category}"
 
 
-def spawn_window(session, name, cwd, command):
-    """session에 윈도우를 만들어 셸 명령 command를 실행하고, 끝난 뒤에도 셸을 남긴다. window_id를 돌려준다."""
+def _keep_shell(command):
     shell = os.environ.get("SHELL", "/bin/sh")
     inner = f"{command}; exec {shell}"
-    command = f"{shell} -ic {shlex.quote(inner)}"
-    common = ["-d", "-P", "-F", "#{window_id}", "-n", name, "-c", str(cwd)]
+    return f"{shell} -ic {shlex.quote(inner)}"
+
+
+def spawn_window(session, name, cwd, command):
+    """session에 윈도우를 만들어 셸 명령 command를 실행하고, 끝난 뒤에도 셸을 남긴다. (window_id, pane_id)를 돌려준다."""
+    common = ["-d", "-P", "-F", "#{window_id} #{pane_id}", "-n", name, "-c", str(cwd)]
     if session in tmux("list-sessions", "-F", "#{session_name}", check=False).splitlines():
-        return tmux("new-window", *common, "-t", f"={session}:", command)
-    return tmux("new-session", *common, "-s", session, "-x", "200", "-y", "50", command)
+        return tmux("new-window", *common, "-t", f"={session}:", _keep_shell(command)).split()
+    return tmux("new-session", *common, "-s", session, "-x", "200", "-y", "50", _keep_shell(command)).split()
+
+
+def split(pane, cwd, command, left):
+    """pane의 왼쪽(또는 오른쪽)에 새 pane을 만들어 command를 실행한다. pane_id를 돌려준다."""
+    side = ["-b"] if left else []
+    return tmux("split-window", "-h", *side, "-d", "-P", "-F", "#{pane_id}", "-t", pane, "-c", str(cwd), _keep_shell(command))
+
+
+def kill_pane(pane):
+    tmux("kill-pane", "-t", pane, check=False)
 
 
 MARKS = {"solved": "✔", "blocked": "!", "waiting_user": "?"}
@@ -57,19 +70,26 @@ def kill_window(window_id):
     tmux("kill-window", "-t", window_id, check=False)
 
 
-def send_text(window_id, text):
+def send_text(pane, text):
     """여러 줄 텍스트를 붙여넣고 Enter를 누른다."""
     tmux("load-buffer", "-b", "ctfm-send", "-", stdin=text)
-    tmux("paste-buffer", "-p", "-d", "-b", "ctfm-send", "-t", window_id)
+    tmux("paste-buffer", "-p", "-d", "-b", "ctfm-send", "-t", pane)
     time.sleep(0.3)
-    tmux("send-keys", "-t", window_id, "Enter")
+    tmux("send-keys", "-t", pane, "Enter")
 
 
-def type_command(window_id, text):
+def type_command(pane, text):
     """슬래시 명령처럼 붙여넣기가 아니라 키 입력으로 넣어야 하는 짧은 텍스트."""
-    tmux("send-keys", "-t", window_id, "-l", text)
+    tmux("send-keys", "-t", pane, "-l", text)
     time.sleep(0.5)
-    tmux("send-keys", "-t", window_id, "Enter")
+    tmux("send-keys", "-t", pane, "Enter")
+
+
+def keys(pane, *names, wait=0.4):
+    """Enter, Up, Escape 같은 키를 하나씩 누른다."""
+    for name in names:
+        tmux("send-keys", "-t", pane, name)
+        time.sleep(wait)
 
 
 def being_viewed(window_id):
@@ -79,6 +99,6 @@ def being_viewed(window_id):
     return attached not in ("", "0") and active == "1"
 
 
-def capture(window_id, lines=40):
-    out = tmux("capture-pane", "-p", "-t", window_id, check=False)
+def capture(pane, lines=40):
+    out = tmux("capture-pane", "-p", "-t", pane, check=False)
     return "\n".join([l for l in out.splitlines() if l.strip()][-lines:])

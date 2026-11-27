@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .state import CTFM_BIN, TEMPLATES, load_env
+from .state import CTFM_BIN, DUAL_CATEGORIES, TEMPLATES, load_env
 
 # 배포본에 들어 있으면 에이전트 설정을 바꿔 버리는 이름들. 어느 깊이에 있든 `.dist`를 붙인다.
 RESERVED = {"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".claude", ".mcp.json", ".codex", ".agents"}  # .agents/skills는 codex가 cwd에서 읽는다
@@ -17,6 +17,14 @@ OWN = {"CHALLENGE.md", "STATE.md", "BLOCKED.md", "CTF_ACCESS.env"}
 ACCESS_FILE = "CTF_ACCESS.env"  # KotH 문제에만 만든다: 사이트 주소와 인증 정보 위임
 TAR_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2")
 NOTES_BEGIN, NOTES_END = "<!-- CTF_NOTES:BEGIN -->", "<!-- CTF_NOTES:END -->"
+DUAL_NOTE = """
+**동시 풀이**: 이 문제는 먼저 푸는 것이 중요해서 codex와 claude 두 에이전트가 이 디렉토리에서 동시에, 서로 독립적으로 푼다(같은 tmux 윈도우의 좌우 pane). 시작 메시지에 동시 풀이라는 말이 없었다면 혼자 푸는 것이니 이 문단은 무시한다.
+
+- 네 기록 파일 이름에는 에이전트 이름(`claude` 또는 `codex`)을 붙인다: `STATE.claude.md`, `BLOCKED.claude.md`, `solve.claude.py`. 이 문서에서 `STATE.md`, `BLOCKED.md`, `solve.py`라고 쓴 곳은 모두 네 이름이 붙은 파일을 뜻한다.
+- 상대의 파일은 고치거나 지우지 않는다. 읽는 것은 된다. 막혔을 때 상대의 `STATE.*.md`를 읽으면 다른 관점을 얻을 수 있다. 다만 거기 적힌 전제는 직접 확인하기 전까지 `[추정]`이다.
+- 로컬 재현 환경(docker 컨테이너, 포트)은 겹치지 않게 따로 띄운다. 상대가 띄운 것을 내리거나 다시 빌드하지 않는다.
+- 한쪽이 플래그를 얻으면 다른 쪽에 종료 메시지가 입력된다. 그 메시지를 받으면 멈춘다.
+"""
 
 
 def extract(archive, dest):
@@ -115,6 +123,7 @@ def write_agents(root, ch):
     (chal_dir / "AGENTS.md").write_text(render("AGENTS_KOTH.md" if koth else "AGENTS.md", {
         "name": ch["name"], "category": ch["category"], "ctfm": CTFM_BIN,
         "notes": f"{NOTES_BEGIN}\n{notes_text(root)}\n{NOTES_END}",
+        "dual": DUAL_NOTE if ch["category"] in DUAL_CATEGORIES else "",
         **({"strategy": koth_strategy(), "access": ACCESS_FILE} if koth else {}),
     }))
 

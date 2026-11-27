@@ -109,10 +109,36 @@ class AgentCommand(unittest.TestCase):
         from ctfm import daemon
         store = SimpleNamespace(root=Path("/x/CTF"))
         ch = {"category": "pwn", "slug": "a"}
-        cmd = shlex.split(daemon.agent_command(store, {"model": "m", "codex_model": "gpt-x"}, ch, "codex", False))
+        cmd = shlex.split(daemon.agent_command(store, {"model": "m", "codex_model": "gpt-x"}, ch, {"agent": "codex"}, False))
         self.assertEqual(cmd, ["insane-codex", "-m", "gpt-x"])
-        resume = shlex.split(daemon.agent_command(store, {"model": "m"}, ch, "codex", True))
+        resume = shlex.split(daemon.agent_command(store, {"model": "m"}, ch, {"agent": "codex"}, True))
         self.assertEqual(resume[:3], ["insane-codex", "resume", "--last"])
         self.assertNotIn("-m", resume)
-        claude = daemon.agent_command(store, {"model": "m"}, ch, "claude", True)
+        me = {"agent": "claude"}
+        claude = daemon.agent_command(store, {"model": "m"}, ch, me, True)
         self.assertTrue(claude.startswith("claude ") and claude.endswith("--continue"))
+        self.assertNotIn("--effort", claude)
+        # effort: 설정값으로 시작하고, 상향된 문제는 max로 이어 간다. KotH는 지정하지 않는다
+        cfg = {"model": "m", "effort": "xhigh", "codex_model": "gpt-x", "codex_effort": "medium", "codex_fast": 1}
+        self.assertIn("--model m --effort xhigh ", daemon.agent_command(store, cfg, ch, me, False))
+        self.assertIn("--effort max ", daemon.agent_command(store, cfg, ch, {**me, "effort": "max"}, True))
+        koth = {**ch, "category": "koth"}
+        self.assertNotIn("--effort", daemon.agent_command(store, cfg, koth, me, False))
+        # KotH 체인 항목에 effort가 있으면 그 값으로 띄운다 (후임 Mythos high)
+        self.assertIn("--model mythos --effort high ", daemon.agent_command(store, cfg, koth, {**me, "model": "mythos", "effort": "high"}, False))
+        # 동시 풀이에서 문제별 모델 지정은 주 에이전트(claude)의 것이고 codex는 설정값을 쓴다
+        dual = {**ch, "agent": "claude", "model": "claude-x", "peer": {"agent": "codex"}}
+        self.assertEqual(daemon.describe(cfg, dual, dual["peer"]), "codex gpt-x medium fast")
+        self.assertEqual(daemon.describe(cfg, dual, dual), "claude claude-x xhigh")
+
+    def test_codex_effort_menu(self):
+        from ctfm import daemon
+        screen = """  Select Reasoning Level for GPT-6-Sol
+  1. Low               Fast responses with lighter reasoning
+  2. Medium (default)  Balances speed and reasoning depth for everyday tasks
+› 3. High (current)    Greater reasoning depth for complex problems
+  4. Extra high        Extra high reasoning depth for complex problems
+  enter default · s session · esc back"""
+        self.assertEqual(daemon.menu_moves(screen, "medium"), -1)
+        self.assertEqual(daemon.menu_moves(screen.replace("› 3.", "  3.").replace("  1. Low", "› 1. Low"), "high"), 2)
+        self.assertIsNone(daemon.menu_moves("› Ask Codex to do anything", "medium"))

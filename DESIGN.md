@@ -165,7 +165,7 @@ echo $? > <CTF>/.ctfm/launch/<slug>.exit      # 데몬이 claude 종료를 감�
 | `queued` | 다운로드 완료 | - |
 | `running` | spawn | 점유 |
 | `waiting_user` | `ctfm report ask` (토큰/시도 제한 관련 질문) | 점유 |
-| `blocked` | `ctfm report blocked` (3회 재검토 후). **종료 상태가 아님**: 알림을 보낸 뒤에도 계속 풀이 중 | 점유 |
+| `blocked` | `ctfm report blocked` (2회 재검토 후, 3번째 막힘). **종료 상태가 아님**: 알림을 보낸 뒤에도 계속 풀이 중 | 점유 |
 | `solved` | `ctfm report solved` | 반환 |
 | `killed` | 사용자 지시로 `ctfm kill` | 반환 |
 | `exited` | claude 프로세스가 스스로 종료 | 반환, 이벤트로 알림 |
@@ -176,11 +176,11 @@ echo $? > <CTF>/.ctfm/launch/<slug>.exit      # 데몬이 claude 종료를 감�
 | 명령 | 효과 |
 |---|---|
 | `report solved --flag '<flag>'` | 상태 `solved`, Discord: 분야/문제명/플래그, 슬롯 반환 |
-| `report retry` | 재검토 횟수 +1, 재검토 체크리스트 출력. 3회째 재검토 후에도 진전이 없어 다시 호출하면 "`report blocked`로 알리고 계속 풀어라" 출력 |
+| `report retry` | 재검토 횟수 +1, 재검토 체크리스트 출력(2회째의 claude는 effort 상향 안내, 11절). 2회째 재검토 후에도 진전이 없어 다시 호출하면 "`report blocked`로 알리고 계속 풀어라" 출력 |
 | `report blocked` | 상태 `blocked`, `BLOCKED.md` 전문을 Discord로 전송(2000자 초과 시 분할), 재검토 횟수를 0으로 초기화. 출력: "알림 전송됨. 멈추지 말고 다음 재검토 사이클을 시작하라" |
 | `report ask --question '<질문>'` | 상태 `waiting_user`, Discord: 질문 내용 |
 
-`blocked` 이후에도 사이클은 반복된다: 재검토 3회 → 알림 → 재검토 3회 → 알림. 알림마다 갱신된 `BLOCKED.md`가 전송되므로 사용자는 가장 최근 알림 하나만 보면 된다.
+`blocked` 이후에도 사이클은 반복된다: 재검토 2회 → 알림 → 재검토 2회 → 알림. 알림마다 갱신된 `BLOCKED.md`가 전송되므로 사용자는 가장 최근 알림 하나만 보면 된다.
 
 ### 5.6 포기 차단 Stop hook
 
@@ -223,7 +223,7 @@ echo $? > <CTF>/.ctfm/launch/<slug>.exit      # 데몬이 claude 종료를 감�
    3. STATE.md의 풀이 논리를 단계별로 재검증하고 `[추정]` 전제를 실제로 확인해 틀린 곳을 찾는다
    4. novel 표면 점검: 아직 안 본 파일/함수/엔드포인트, 제목·설명·태그의 힌트, 버전과 설정 특이점, 로컬과 원격의 차이
    5. 새 가설로 재개
-9. **재검토를 3회 했는데도 진전이 없으면 (insight 요청)**: 사용자에게 도움을 청하는 단계이지 끝이 아니다.
+9. **재검토를 2회 했는데도 진전이 없으면 (insight 요청)**: 사용자에게 도움을 청하는 단계이지 끝이 아니다.
    1. 아래 형식의 막힘 설명을 `BLOCKED.md`에 쓰고 같은 내용을 채팅에도 출력한다. 독자는 이 문제를 전혀 모른다고 가정한다.
       - 문제 설명: 무엇이 주어지고 무엇을 해야 플래그가 나오는지
       - 플래그까지의 전체 경로와 그중 이미 확보한 단계 (근거 포함)
@@ -297,7 +297,7 @@ download(cfg, file, dest)
   - **codex에는 Stop hook이 없다.** codex의 Stop hook 자체는 동작한다(`-c`로 inline 등록 시 11회 연속 차단 확인, 출력 형식은 Claude와 같음). 그러나 `-c`, `--enable/--disable`, `--dangerously-bypass-hook-trust` 중 하나라도 주면 공유 app-server 대신 내장 모드로 뜬다. 이 insane-codex 0.170 빌드에는 내장 모드용 `codex-code-mode-host`가 없어서 셸 명령이 전부 실패한다. 파일(`.codex/hooks.json`)로 넣어도 hook마다 신뢰가 필요하고, 신뢰 우회 옵션은 역시 내장 모드를 강제한다. 사용자 결정으로 hook 없이 `insane-codex [resume --last] [-m 모델]`만 쓴다. 대신 관리 세션이 입력 대기 중인 codex를 `ctfm send`로 다시 진행시킨다.
   - 질문 도구: `request_user_input`은 기본 모드에서 호출이 실패한다. 하지만 모델 카탈로그가 붙여 주는 `request_user_input_async`는 동작하고 끌 수 없다(PreToolUse hook으로는 막을 수 있었지만 위 이유로 못 씀). AGENTS.md 4번 규칙으로만 막는다.
   - `ctfm send`는 `waiting_user`를 `running`으로 되돌린다(Claude는 Stop hook이 하던 일).
-  - codex 기본 모델은 `gpt-5.6-sol`(ctfm 설정 `codex_model`. `~/.codex/config.toml`의 기본값과 별개).
+  - codex 기본 모델은 `gpt-5.6-sol`(ctfm 설정 `codex_model`. `~/.codex/config.toml`의 기본값과 별개). 2026-11-27에 `gpt-6-sol`로 바뀜(아래).
   - **유휴 재개**: Stop hook 대신 데몬이 15초마다 화면을 확인한다. 하단에 작업 중 표시(`esc to interrupt`)가 없고 화면이 `idle_nudge`초(기본 120) 동안 그대로면 `ctfm send`와 같은 방식으로 계속 진행 메시지를 넣고 `NUDGED` 이벤트를 남긴다. claude에도 적용되고, `waiting_user`와 사용자가 보고 있는 윈도우는 건너뛴다. `ctfm set idle-nudge 0`이면 끈다.
   - codex의 셸 명령은 공유 app-server 환경에서 실행돼 실행 스크립트의 `PATH`가 전달되지 않는다. AGENTS.md는 `ctfm` 전체 경로를 쓰게 한다.
   - `[?]` 공유 app-server 모드에서는 명령을 공식 codex 0.172 app-server가 실행하므로, insane 패치가 실제 풀이에 적용되는지 불확실하다.
@@ -308,6 +308,28 @@ download(cfg, file, dest)
   - `ctfm report round --round N`, `ctfm spawn --model`(KotH에 쓰면 자동 전환과 fast 조정을 끔), KotH용 Stop hook/유휴 재개 문구.
   - 모델 전환 때 이전 셸이 늦게 쓰는 종료 표식과 섞이지 않게 종료 표식 파일을 실행마다 새로 만든다.
 - **이벤트 구독은 `command grep`** (`/setup-ctf` E2E 후): Claude Code 셸의 `grep`은 내장 ugrep으로 바뀌는데, `--line-buffered`를 줘도 마지막 한 줄을 다음 줄이 올 때까지 내보내지 않는다. 그래서 뒤따르는 이벤트가 없는 ASK가 관리 세션에 4분 넘게 전달되지 않았다.
+- **동시 풀이와 effort 상향** (2026-11-27, 사용자 결정: 퍼블 점수 때문에 속도가 중요):
+  - **모델 기본값**: claude `claude-opus-5` effort `xhigh`(`claude --effort`), codex `gpt-6-sol` effort `medium` + fast. 설정 `effort`, `codex_effort`, `codex_fast`. KotH는 모델 체인을 따르고 effort를 지정하지 않는다.
+  - **동시 풀이**: `DUAL_CATEGORIES = (pwn, rev)` 문제는 윈도우 하나를 좌우로 나눠 왼쪽에 codex, 오른쪽에 claude를 띄운다(`split-window -h -b`). 문제별로 `ctfm spawn --agent dual|claude|codex`로 바꿀 수 있다. 슬롯은 문제당 하나.
+    - 상태 구조: 문제 기록이 곧 주 에이전트(claude)의 pane 기록이고, codex는 `peer`에 같은 키(`agent`, `pane`, `exit_file`, `retries`, 유휴 판정 값)로 들어간다. tmux 입력과 화면 캡처는 `window_id`가 아니라 `pane` id로 한다(윈도우 대상은 활성 pane으로 가서 사용자가 pane을 옮기면 엉뚱한 쪽에 들어간다).
+    - 같은 디렉토리를 쓴다(로컬 재현 환경과 배포 파일을 공유). 기록 파일은 `STATE.<에이전트>.md`처럼 이름을 나눈다(AGENTS.md 1번의 동시 풀이 문단, pwn·rev에만 렌더링).
+    - `ctfm report`를 부른 쪽 구분: 실행 스크립트가 `CTFM_AGENT`를 export한다. claude의 셸에는 전달되고, codex의 셸은 공유 app-server에서 돌아 전달되지 않으므로 변수가 없으면 codex로 본다. `CLAUDECODE` 유무로는 구분할 수 없다(app-server 환경에 claude 변수가 남아 있는 것을 확인).
+    - 한쪽이 `solved`를 보고하면 다른 쪽에 종료 메시지를 넣는다. 종료 감지는 pane별이고 둘 다 끝나야 `exited`. codex가 `ask`한 경우 claude의 Stop hook은 멈춤을 허용하지 않는다(`asker`).
+  - **codex effort/fast**: `-p <프로필>`도 `-c`처럼 내장 모드를 강제해 셸 도구가 실패한다(확인). 그래서 데몬이 하단 표시(`GPT-6-Sol high fast ·`)를 읽어 설정과 다르면 맞춘다. effort는 `/model` → Enter(커서가 현재 모델) → effort 메뉴에서 커서 이동 → `s`(session). 메뉴에서 Enter나 숫자 키는 `~/.codex/config.toml`의 기본값을 바꾸므로 쓰지 않는다. 작업 중에도 적용된다(확인). `/fast`는 config의 `service_tier`도 바꾼다(확인, 피할 방법 없음). `[?]` effort 변경이 진행 중인 턴에 바로 반영되는지는 미확인. `[?]` 하단 표시의 `xhigh` 이상 표기는 미확인이라 `codex_effort`는 low/medium/high만 받는다.
+  - **effort 상향**: 재검토 한도를 3 → 2로 줄였다. 2회째 `report retry`에서 claude(KotH 제외, 아직 max가 아닐 때)는 "STATE.md를 갱신하고 턴을 끝내라"는 안내를 받고 `escalate=pending`이 된다. Stop hook은 `escalate`가 있는 동안 멈춤을 허용한다. 데몬은 3초 간격으로 화면을 보고, 작업 중 표시가 두 번 연속 없으면 `/effort max`와 `/compact`를 키 입력으로 넣고, compact가 끝나면(compact 중에는 `esc to interrupt`가 보인다, 확인) 엄밀한 재검토 지시를 붙여 넣는다(`ESCALATED`). `effort=max`가 문제에 기록되어 resume 때도 유지된다. 3번째 막힘은 기존 `blocked` 알림이다. codex는 상향 대상이 아니다.
+- **Discord 포럼 채널, KotH 라운드 요약, 경쟁형 KotH** (2026-11-27, 사용자 결정: 알림이 한 채널에 섞이면 따라가기 어려움):
+  - webhook은 포럼 채널의 것을 쓴다. 문제마다 `[분야] 문제이름` 포스트를 만들어 그 문제의 알림을 모으고, `ctfm notify`는 대회 이름의 공통 포스트로 보낸다. 포스트 id는 `state.json`의 `threads`에 둔다.
+  - 확인한 API 동작: `?wait=true` + 본문 `thread_name` → 새 포스트, 응답의 `channel_id`가 포스트 id. `?thread_id=<id>` → 이어 붙임(204). 둘 다 없으면 400(220001). 없는 포스트는 400 Unknown Channel(10003)이라 그때는 새로 만든다. 일반 텍스트 채널 webhook은 스레드를 만들 수 없어 지원하지 않는다.
+  - 동시에 온 첫 알림 둘이 포스트를 두 개 만들지 않게 전송을 `notify.lock`으로 직렬화한다(상태 잠금과 별개라 데몬을 막지 않는다).
+  - `ctfm report round`에 `--summary`(필수)를 추가해 라운드마다 진행 요약을 그 문제의 포스트로 보낸다.
+  - `KOTH_STRATEGY.md` 7.5: 다른 팀의 제출물에 따라 점수가 달라지는 문제면 메인이 claude로 전환된 뒤부터(초반 codex 세션은 점수 확보에만 집중, 사용자 결정) 메인은 기존 전략을 계속하고, 상대 전략 분석과 대응 방안 수립을 맡는 subagent 하나를 병렬로 돌린다(산출물 `OPPONENTS.md`, 제출과 후보 수정은 하지 않음). `[?]` codex(Astra)가 하위 에이전트를 실제로 띄우는지는 확인하지 못했다. 못 쓰면 메인이 직접 분석하도록 적어 두었다.
+- **KotH 메인 전환** (2026-11-27, 사용자 결정: codex 사용량이 claude보다 적어 Astra를 오래 쓸 수 없음):
+  - Astra(fast)가 라운드 4까지 메인, 이후 Mythos 5.2(effort high, 막히면 Opus 5.5). 체인 첫 항목의 `fast_rounds`(4)가 "초반 모델이 맡는 마지막 라운드"이고, 체인 항목에 `effort`를 둘 수 있다.
+  - 보고된 라운드가 `fast_rounds` 이상이 되면(= 라운드 3이 끝나 4를 준비하는 동안) 데몬이 체인의 다음 항목을 **후임**으로 메인의 오른쪽 pane에 띄운다(`SUCCESSOR`). 동시 풀이의 `peer` 구조를 그대로 쓰고 `role=successor`로 구분한다. 후임은 AGENTS_KOTH.md 8번에 따라 제출 없이 Astra의 작업을 확인하고 `HANDOVER.md`를 쓴 뒤 `ctfm report ready`로 알린다(`READY`, Discord).
+  - 전환은 관리 세션이 `ctfm handover X`로 한다: Astra pane 종료, 후임 기록을 메인으로 올림, 후임에게 전환 메시지(현재 라운드 확인과 보고, 미제출이면 제출, 경쟁형이면 상대 분석 subagent 시작). 언제 전환할지(Astra의 라운드 4 제출 뒤, 준비가 늦으면 그 뒤 라운드)는 화면을 봐야 알 수 있어 데몬이 아니라 관리 세션이 판단한다.
+  - Stop hook: 후임은 `ready` 전에는 준비를 계속하라는 문구로 차단하고, `ready` 뒤에는 전환을 기다리며 멈추게 둔다. 유휴 재개 메시지는 후임에게 넣지 않는다.
+  - 모델 사용 불가 감지는 pane별이다. 메인(Astra)이 막혔는데 후임이 있으면 후임에게 바로 넘기고, 후임이 막히면 후임 pane만 체인의 다음 모델로 다시 띄운다.
+  - `ctfm report`를 부른 쪽은 `CTFM_AGENT`가 가리키는 에이전트의 pane, 없으면 codex pane으로 찾는다(메인이 codex이고 후임이 claude인 배치에도 맞게 일반화).
 
 ## 12. 테스트
 

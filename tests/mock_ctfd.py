@@ -40,6 +40,7 @@ class MockCTFd:
         self.challenges = {}  # id -> {name, category, value, solves, solved_by_me, description, connection_info, files, ...}
         self.started = True
         self.webhook = []     # Discord로 전송된 content 목록
+        self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"}
         self.writes = []      # webhook 외의 쓰기 요청 (있으면 안 됨)
         self.server = None
 
@@ -88,9 +89,18 @@ class MockCTFd:
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                if self.path == "/webhook":
-                    mock.webhook.append(json.loads(body)["content"])
-                    return self.reply(204, b"")
+                path, _, query = self.path.partition("?")
+                if path == "/webhook":  # 포럼 채널 webhook: thread_name으로 포스트를 만들거나 thread_id로 이어 붙인다
+                    data = json.loads(body)
+                    thread = query.partition("thread_id=")[2] or None
+                    if thread is None and data.get("thread_name"):
+                        thread = str(1000 + len(mock.threads))
+                        mock.threads[thread] = {"name": data["thread_name"], "messages": []}
+                    if thread not in mock.threads:
+                        return self.reply(400, {"message": "Unknown Channel" if thread else "must have a thread_name or thread_id"})
+                    mock.threads[thread]["messages"].append(data["content"])
+                    mock.webhook.append(data["content"])
+                    return self.reply(200, {"channel_id": thread})
                 mock.writes.append(self.path)
                 return self.reply(403, {"message": "forbidden"})
 
