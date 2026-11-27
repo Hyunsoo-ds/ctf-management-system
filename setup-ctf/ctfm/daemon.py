@@ -51,7 +51,9 @@ UNAVAILABLE_PATTERN = re.compile(
     r"|violate our usage policy|unable to respond to this request|flagged as potentially|safety (block|check failed)"
     r"|high.risk cyber", re.I)
 CODEX_FOOTER = re.compile(r"GPT-[\w.\-]+ (\w+)( fast)? ·")  # 예: "GPT-6.2-Astra high fast · /path ·" → (effort, fast)
-EFFORT_MENU = {"low": "Low", "medium": "Medium", "high": "High"}  # codex /model 메뉴의 effort 항목 이름
+# codex /model 메뉴의 effort 항목 이름. max는 "More reasoning…" 아래의 하위 메뉴(Advanced Reasoning)에 있다
+EFFORT_MENU = {"low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra high", "max": "Max"}
+ADVANCED = ("max",)
 EXIT_DIALOG = re.compile(r"Background work is running|Exit and stop tasks")  # claude: 백그라운드 작업이 있을 때의 종료 확인 창
 CHECK_EVERY = 15
 NUDGE_MESSAGE = (
@@ -263,28 +265,41 @@ def koth_fallback(store, cfg, ch, p, reason):
     store.emit("MODEL_FALLBACK", f"{pane_label(ch, p)} {prev['model']} 사용 불가({reason}) → {nxt['model']}로 다시 띄움")
 
 
-def menu_moves(screen, effort):
-    """codex effort 선택 메뉴 화면에서 커서(›)를 원하는 항목까지 옮길 칸 수(아래가 +). 메뉴가 아니면 None."""
-    if "Select Reasoning Level" not in screen:
+def menu_moves(screen, header, item):
+    """codex 선택 메뉴 화면에서 커서(›)를 item 항목까지 옮길 칸 수(아래가 +). header가 제목인 메뉴가 떠 있지 않으면 None."""
+    if header not in screen:
         return None
-    rows = {name: (int(n), bool(cur)) for cur, n, name in re.findall(r"^\s*(›)?\s*(\d)\. (Low|Medium|High)\b", screen, re.M)}
+    menu = screen[screen.rindex(header):]
+    rows = {name: (int(n), bool(cur)) for cur, n, name in re.findall(r"^\s*(›)?\s*(\d)\. ([A-Z][a-z]+(?: [a-z]+)?)", menu, re.M)}
     cursor = [n for n, cur in rows.values() if cur]
-    if EFFORT_MENU.get(effort) not in rows or not cursor:
+    if item not in rows or not cursor:
         return None
-    return rows[EFFORT_MENU[effort]][0] - cursor[0]
+    return rows[item][0] - cursor[0]
 
 
 def set_codex_effort(pane, effort):
     """codex TUI의 /model 메뉴를 키 입력으로 조작해 이 세션의 effort만 바꾼다(작업 중에도 된다).
-    메뉴에서 Enter나 숫자 키는 ~/.codex/config.toml의 기본값까지 바꾸므로, 커서를 옮긴 뒤 `s`(session)로 고른다."""
+    메뉴에서 Enter나 숫자 키는 ~/.codex/config.toml의 기본값까지 바꾸므로, 커서를 옮긴 뒤 `s`(session)로 고른다.
+    max는 "More reasoning…"에서 Enter로 하위 메뉴를 연 뒤 같은 방식으로 고른다(이 Enter는 메뉴를 열 뿐이다)."""
+    def move(header, item, opened):
+        moves = menu_moves(tmux.capture(pane), header, item)
+        if moves is None:
+            tmux.keys(pane, *(["Escape"] * opened))
+            return False
+        tmux.keys(pane, *(["Down" if moves > 0 else "Up"] * abs(moves)))
+        return True
+
     tmux.type_command(pane, "/model")
     time.sleep(1)
     tmux.keys(pane, "Enter", wait=1)  # 모델 목록: 커서가 현재 모델에 있다
-    moves = menu_moves(tmux.capture(pane), effort)
-    if moves is None:
-        tmux.keys(pane, "Escape", "Escape")
+    advanced = effort in ADVANCED
+    if not move("Select Reasoning Level", "More reasoning" if advanced else EFFORT_MENU[effort], 2):
         return False
-    tmux.keys(pane, *(["Down" if moves > 0 else "Up"] * abs(moves)), "s")
+    if advanced:
+        tmux.keys(pane, "Enter", wait=1)
+        if not move("Advanced Reasoning", EFFORT_MENU[effort], 3):
+            return False
+    tmux.keys(pane, "s")
     return True
 
 

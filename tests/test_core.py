@@ -139,6 +139,20 @@ class AgentCommand(unittest.TestCase):
 › 3. High (current)    Greater reasoning depth for complex problems
   4. Extra high        Extra high reasoning depth for complex problems
   enter default · s session · esc back"""
-        self.assertEqual(daemon.menu_moves(screen, "medium"), -1)
-        self.assertEqual(daemon.menu_moves(screen.replace("› 3.", "  3.").replace("  1. Low", "› 1. Low"), "high"), 2)
-        self.assertIsNone(daemon.menu_moves("› Ask Codex to do anything", "medium"))
+        level = "Select Reasoning Level"
+        self.assertEqual(daemon.menu_moves(screen, level, "Medium"), -1)
+        self.assertEqual(daemon.menu_moves(screen, level, "Extra high"), 1)
+        self.assertEqual(daemon.menu_moves(screen.replace("› 3.", "  3.").replace("  1. Low", "› 1. Low"), level, "High"), 2)
+        self.assertIsNone(daemon.menu_moves("› Ask Codex to do anything", level, "Medium"))
+        # max는 "More reasoning…" 아래 하위 메뉴에 있다. 현재 값이 max면 커서가 그 항목에 있다
+        more = screen.replace("› 3. High (current) ", "  3. High           ") + "\n› 5. More reasoning… (current)  Max and Ultra consume usage limits faster"
+        self.assertEqual(daemon.menu_moves(more, level, "More reasoning"), 0)
+        self.assertEqual(daemon.menu_moves(more, level, "Extra high"), -1)
+        advanced = """  Advanced Reasoning
+  ⚠ Consumes usage limits faster
+  1. Max              For difficult problems when quality matters more than speed · higher usage
+› 2. Ultra (current)  For demanding work using multiple agents · highest usage
+  enter default · s session · esc back"""
+        self.assertEqual(daemon.menu_moves(advanced, "Advanced Reasoning", "Max"), -1)
+        self.assertIsNone(daemon.menu_moves(advanced, level, "Max"))  # 다른 메뉴가 떠 있으면 건드리지 않는다
+        self.assertEqual(set(daemon.EFFORT_MENU), {"low", "medium", "high", "xhigh", "max"})

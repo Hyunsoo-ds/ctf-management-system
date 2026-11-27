@@ -502,7 +502,7 @@ def main(argv=None):
     s.add_argument("key", choices=["max-agents", "agent", "model", "effort", "codex-model", "codex-effort", "codex-fast",
                                    "poll-interval", "idle-nudge", "category-map", "auto-submit"],
                    help="auto-submit: 1이면 관리 세션의 `ctfm submit`을 허용 (사용자가 명시적으로 허용했을 때만 켠다). "
-                        "effort: claude 시작 effort. codex-effort: low|medium|high. codex-fast: 1/0. "
+                        "effort: claude 시작 effort. codex-effort: low|medium|high|xhigh|max. codex-fast: 1/0. "
                         "idle-nudge: 플래그 없이 입력 대기로 멈춘 에이전트를 몇 초 뒤 재개시킬지 (0이면 끔)")
     s.add_argument("value")
     s.set_defaults(fn=cmd_set)

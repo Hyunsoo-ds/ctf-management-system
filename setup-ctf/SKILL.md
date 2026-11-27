@@ -107,7 +107,7 @@ disable-model-invocation: true
 | "X 지금 뭐 해" | `ctfm peek X` (동시 풀이면 두 pane을 차례로 보여 준다. `--agent`로 한쪽만) |
 | "최대 N개로" | `ctfm set max-agents N` |
 | "모델 바꿔" | `ctfm set model <id>`(claude) 또는 `ctfm set codex-model <id>`(codex). 이후 spawn부터 적용 |
-| "effort 바꿔" | `ctfm set effort <low\|medium\|high\|xhigh\|max>`(claude 시작 effort, 이후 spawn부터), `ctfm set codex-effort <low\|medium\|high>`, `ctfm set codex-fast <1\|0>`(codex는 실행 중인 세션에도 곧 반영된다) |
+| "effort 바꿔" | `ctfm set effort <low\|medium\|high\|xhigh\|max>`(claude 시작 effort, 이후 spawn부터), `ctfm set codex-effort <low\|medium\|high\|xhigh\|max>`, `ctfm set codex-fast <1\|0>`(codex는 실행 중인 세션에도 곧 반영된다) |
 
 문제 이름은 ID, 디렉토리 이름, 이름의 일부로 지정할 수 있다. 여러 개가 걸리면 `ctfm`이 후보를 보여 준다.
 
