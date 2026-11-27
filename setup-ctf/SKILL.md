@@ -33,7 +33,7 @@ disable-model-invocation: true
    ```
    생략 시 기본값은 max-agents 8, 에이전트 claude, model `claude-opus-5`(effort `xhigh`), codex 모델 `gpt-6-sol`(effort `medium`, fast 켬), 즉시 시작이다. `--model`은 claude용, `--codex-model`은 codex용이다. effort와 fast는 `ctfm set effort|codex-effort|codex-fast <값>`으로 바꾼다(KotH에는 적용되지 않는다).
    **pwn과 rev 문제는 동시 풀이다**(퍼블 경쟁용): 한 윈도우를 좌우로 나눠 왼쪽 pane에 codex, 오른쪽 pane에 claude를 띄운다. 자세한 것은 5절.
-   codex 에이전트는 `insane-codex`(빌드 기본값이 `--yolo`)로 뜨고 `$solve-challenge`로 시작한다. **codex에는 Stop hook(포기 차단)이 없다.** 대신 데몬이 플래그 없이 입력 대기로 120초 넘게 멈춘 에이전트에 계속하라는 메시지를 자동으로 넣는다(`NUDGED`, claude에도 적용, 사용자가 그 윈도우를 보고 있으면 건너뜀, `ctfm set idle-nudge <초>`로 조정, 0이면 끔). codex가 `ASK`로 질문하면 상태가 `waiting_user`로 남는데, `ctfm send`로 답을 보내면 `running`으로 돌아간다. 사용자가 윈도우에 직접 답했다면 `ctfm send <문제> "계속하라"`로 상태를 되돌린다.
+   codex 에이전트는 `insane-codex`(빌드 기본값이 `--yolo`)로 뜨고 `$solve-challenge`로 시작한다. **codex에는 Stop hook(포기 차단)이 없다.** 대신 데몬이 플래그 없이 입력 대기로 120초 넘게 멈춘 에이전트에 계속하라는 메시지를 자동으로 넣는다(`NUDGED`, claude에도 적용, 사용자가 그 윈도우를 보고 있으면 건너뜀, `ctfm set idle-nudge <초>`로 조정, 0이면 끔). 에이전트가 `ASK`로 질문하면 답이 올 때까지 상태가 `waiting_user`로 남고, 그동안은 계속하라는 메시지도 들어가지 않는다. `ctfm send`로 답을 보내면 `running`으로 돌아간다. 사용자가 윈도우에 직접 답한 경우 claude는 자동으로 돌아가지만, codex는 `ctfm send --agent codex <문제> "계속하라"`로 상태를 되돌려야 한다.
 3. Discord 확인: `ctfm notify "setup-ctf 시작: <CTF 이름>"`. webhook은 **포럼 채널**의 것이어야 한다. 알림은 문제마다 `[분야] 문제이름` 포스트 하나에 모이고(플래그, 막힘, 질문, KotH 라운드 요약), `ctfm notify`는 대회 이름의 공통 포스트로 간다. 실패하면 `.env`의 `DISCORD_WEBHOOK_URL`(이 디렉토리의 `.env` → 스킬 저장소의 `.env` 순으로 찾는다)을 사용자와 확인한다.
 4. 로그인 확인: `ctfm check`.
    - `login_ok: true`면 통과. 대회 시작 전에는 `list_error`(예: 403)가 함께 나오는 것이 정상이다.

@@ -178,6 +178,7 @@ def intake(store, http, adapter, ch):
         write_access(store, ch)
     (chal_dir / "CLAUDE.md").write_text("@AGENTS.md\n")
     (chal_dir / ".claude").mkdir()
-    hook = {"type": "command", "command": f"{CTFM_BIN} hook stop", "timeout": 30}
-    (chal_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"Stop": [{"hooks": [hook]}]}}, indent=1))
+    hooks = {event: [{"hooks": [{"type": "command", "command": f"{CTFM_BIN} hook {name}", "timeout": 30}]}]
+             for event, name in (("Stop", "stop"), ("UserPromptSubmit", "prompt"))}
+    (chal_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": hooks}, indent=1))
     marker.unlink()

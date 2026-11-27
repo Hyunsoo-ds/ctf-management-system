@@ -127,8 +127,9 @@ class Flow(unittest.TestCase):
         self.assertIn("포기는 없다", (hard / "AGENTS.md").read_text())
         self.assertIn("STATE.claude.md", (hard / "AGENTS.md").read_text())  # 동시 풀이 규칙은 pwn, rev에만
         self.assertNotIn("동시 풀이", (self.chal_dir("wanted") / "AGENTS.md").read_text())
-        hook = json.loads((hard / ".claude" / "settings.json").read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
-        self.assertTrue(hook.endswith("bin/ctfm hook stop"))
+        hooks = json.loads((hard / ".claude" / "settings.json").read_text())["hooks"]
+        self.assertTrue(hooks["Stop"][0]["hooks"][0]["command"].endswith("bin/ctfm hook stop"))
+        self.assertTrue(hooks["UserPromptSubmit"][0]["hooks"][0]["command"].endswith("bin/ctfm hook prompt"))
         self.assertFalse(list(self.root.rglob(".env.*")) or (hard / ".env").exists())
         self.assertFalse((self.root / "misc" / "done").exists())
 
@@ -197,8 +198,12 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.status()["easy one"], "waiting_user")
         self.assertIn("팀 토큰이 필요함", self.mock.webhook[-1])
         self.assertIn("TESTCTF-pwn:?easy_one", self.windows())  # 윈도우 이름에 상태 표시
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(out, "")
+        for _ in range(2):  # 답이 올 때까지 멈춤을 허용하고 상태를 유지한다(유휴 재개 메시지가 들어가지 않게)
+            _, out = self.run_cli("hook", "stop", stdin=hook_in)
+            self.assertEqual(out, "")
+        self.assertEqual(self.status()["easy one"], "waiting_user")
+        _, out = self.run_cli("hook", "prompt", stdin=hook_in)  # 사용자가 윈도우에 직접 답을 입력했다
+        self.assertEqual((out, self.status()["easy one"]), ("", "running"))
         self.assertIn("TESTCTF-pwn:easy_one", self.windows())
         _, out = self.run_cli("hook", "stop", stdin=hook_in)
         self.assertEqual(json.loads(out)["decision"], "block")

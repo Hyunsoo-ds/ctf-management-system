@@ -189,7 +189,7 @@ echo $? > <CTF>/.ctfm/launch/<slug>.exit      # 데몬이 claude 종료를 감�
 | 문제 상태 | 판정 |
 |---|---|
 | `solved` | 멈춤 허용 |
-| `waiting_user` | 멈춤 1회 허용 후 상태를 `running`으로 되돌림 (사용자 답변 뒤 다시 멈추려 하면 차단) |
+| `waiting_user` | 답이 올 때까지 멈춤 허용. 답이 들어오면(`ctfm send` 또는 윈도우 직접 입력 → UserPromptSubmit hook) `running`으로 되돌리고 다시 차단 (11절) |
 | 그 외 (`running`, `blocked`) | `{"decision":"block","reason":"플래그 미획득. 포기는 없다. 막혔다면 AGENTS.md 8번 절차를 수행하라."}` 로 차단 |
 
 - 사용자의 Esc 중단에는 Stop hook이 실행되지 않으므로 사용자가 직접 세션에 개입하는 것은 막지 않는다. `ctfm kill`도 그대로 동작.
@@ -335,6 +335,7 @@ download(cfg, file, dest)
   - `ctfm submit <문제> [--flag F] [--approved]`: 설정 `auto_submit`이 켜져 있거나(`ctfm set auto-submit 1`, 대회 전체 허용) `--approved`(이 제출만 허용)일 때만 동작한다. 문제 디렉토리 안에서 부르면 거부한다(풀이 에이전트 차단). 같은 플래그는 다시 제출하지 않고, 결과를 문제 기록의 `submissions`, `SUBMITTED` 이벤트, Discord 포스트에 남긴다.
   - 어댑터에 `submit(http, cid, flag)`(선택)과 `Http.post_json`(제출 전용)을 추가했다. CTFd는 `POST /api/v1/challenges/attempt`. `[?]` 실제 CTFd에 제출해 보지는 않았다. 응답의 `status` 값(`correct`, `incorrect`, `already_solved`, `ratelimited`, `paused`)은 기억에 의존한 것이라 첫 대회에서 확인이 필요하다.
   - 데몬이 자동으로 제출하지 않고 관리 세션이 `SOLVED`마다 명령을 실행하게 한 이유: 오답 뒤 재제출 여부, 제출 횟수 제한, 플래그 형식 확인처럼 판단이 필요한 경우가 있어서다.
+- **질문 대기는 답이 올 때까지 유지** (2026-11-27): 전에는 Stop hook이 멈춤을 1회 허용하면서 상태를 바로 `running`으로 되돌렸다. 그러면 데몬이 유휴로 판정해 120초 뒤 "계속 진행하라"를 넣어, 질문하고 기다리던 에이전트가 혼자 풀기 시작했다(CLI로 풀기 어려운 문제를 먼저 묻게 한 규칙과 충돌). 이제 Stop hook은 `waiting_user`인 동안 멈춤을 계속 허용하고, 문제 디렉토리의 UserPromptSubmit hook(`ctfm hook prompt`)이 답이 들어온 시점에 `running`으로 되돌린다. hook이 없는 codex는 전과 같이 `ctfm send`가 되돌린다.
 
 ## 12. 테스트
 

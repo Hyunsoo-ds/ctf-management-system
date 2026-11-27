@@ -301,7 +301,7 @@ def cmd_send(a):
                 raise SystemExit(f"{label(ch)} 는 실행 중이 아님 ({ch['status']})")
             for p in live_panes(ch, a.agent):
                 tmux.send_text(p["pane"], a.message)
-            if ch["status"] == "waiting_user":  # 답을 받았다. claude는 Stop hook이 이미 바꿨고, hook이 없는 codex는 여기서 바꾼다
+            if ch["status"] == "waiting_user":  # 답을 받았다. claude는 prompt hook도 바꾸지만, hook이 없는 codex는 여기서 바꾼다
                 ch["status"] = "running"
                 tmux.mark(ch)
             print(f"전송됨: {label(ch)}")
@@ -427,7 +427,8 @@ def cmd_report(a):
 
 
 def cmd_hook(a):
-    """Stop hook. 플래그 없이 멈추려는 턴을 되돌린다. 판단할 수 없으면 멈춤을 허용한다."""
+    """Claude Code hook. stop: 플래그 없이 멈추려는 턴을 되돌린다. prompt: 질문에 대한 답이 들어온 것을 기록한다.
+    판단할 수 없으면 멈춤을 허용한다."""
     try:
         data = json.load(sys.stdin)
         root = find_root(data.get("cwd"))
@@ -438,17 +439,22 @@ def cmd_hook(a):
             ch = current_challenge(st, store, data["cwd"])
             if ch is None:
                 return
-            p = agent_pane(ch, "claude")  # Stop hook은 claude에만 있다
+            asked = ch["status"] == "waiting_user" and ch.get("asker") != "codex"  # claude가 묻고 답을 기다리는 중
+            if a.event == "prompt":  # 사용자가 윈도우에 직접 입력했거나 `ctfm send`가 들어왔다: 답을 받았다
+                if asked:
+                    ch["status"] = "running"
+                    tmux.mark(ch)
+                return
+            p = agent_pane(ch, "claude")  # hook은 claude에만 있다
             if p.get("escalate"):  # effort 상향 대기 중: 턴이 끝나야 데몬이 /effort, /compact를 입력할 수 있다
                 return
             if p.get("role") == "successor":  # KotH 후임: 준비를 마치면 전환을 기다리며 멈춘다
                 if not p.get("ready") and ch["status"] in ACTIVE:
                     print(json.dumps({"decision": "block", "reason": SUCCESSOR_STOP_REASON}, ensure_ascii=False))
                 return
-            if ch["status"] == "waiting_user" and ch.get("asker") != "codex":
-                ch["status"] = "running"  # 질문에 한해 1회만 멈춤 허용
-                tmux.mark(ch)
-            elif ch["status"] in ACTIVE:  # 동시 풀이의 codex가 질문한 것이면 claude는 계속 푼다
+            if asked:  # 답이 올 때까지 멈춰 있게 둔다. 상태를 바꾸면 데몬이 유휴로 보고 계속하라는 메시지를 넣는다
+                return
+            if ch["status"] in ACTIVE:  # 동시 풀이의 codex가 질문한 것이면 claude는 계속 푼다
                 reason = KOTH_STOP_REASON if ch["category"] == "koth" else STOP_REASON
                 print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
     except Exception as e:
@@ -552,7 +558,7 @@ def main(argv=None):
     s.set_defaults(fn=cmd_report)
 
     s = sub.add_parser("hook", help="[Claude Code hook용]")
-    s.add_argument("event", choices=["stop"])
+    s.add_argument("event", choices=["stop", "prompt"])
     s.set_defaults(fn=cmd_hook)
 
     args = p.parse_args(argv)
