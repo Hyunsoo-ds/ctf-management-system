@@ -11,28 +11,37 @@ from .state import (ACTIVE, CTFM_BIN, DUAL_CATEGORIES, label, map_category, pane
                     unique_slug)
 
 AGENTS = ("claude", "codex")
-FIRST_PROMPT = (
-    "{skill} {category} 이 디렉토리의 CTF 문제를 풀어라. "
-    "먼저 AGENTS.md(규칙)와 CHALLENGE.md(문제 설명, 접속 정보)를 읽어라. 문제 파일은 이 디렉토리에 풀려 있다."
+# 초기 프롬프트는 `/goal <목표>`다(claude와 codex 모두 지원). 목표가 이뤄질 때까지 에이전트가 스스로 턴을 이어 간다.
+# 판정은 대화에 드러난 것만 보므로 완료 조건은 출력으로 확인되는 것(`ctfm report ...` 실행)으로 쓴다.
+# 사용자 답을 기다려야 할 때: claude는 도구 없는 턴이 몇 번 이어지면 목표를 일시 정지하고, codex는 목표를 blocked로 둔다.
+# 둘 다 메시지가 들어오면 이어 간다. 한 줄로 쓴다(전환 때는 키 입력으로 넣는다).
+GOAL = (
+    "/goal 이 디렉토리의 CTF 문제({category})를 풀어 실제 플래그를 얻고 `ctfm report solved --flag '<플래그>'`를 실행해 기록됐다는 출력을 확인했다. "
+    "진행 방법: 먼저 AGENTS.md(규칙)와 CHALLENGE.md(문제 설명, 접속 정보)를 읽고 {skill} 스킬로 푼다. 문제 파일은 이 디렉토리에 풀려 있다. "
+    "플래그를 얻기 전에는 끝나지 않는다. 포기하거나 중간 정리만 하고 멈추지 않는다. "
+    "막히면 AGENTS.md 8번 절차(`ctfm report retry`)를 따르고, 그 출력이 기다리라고 하면 도구를 쓰지 않고 기다린다. "
+    "사용자 확인이 필요하면 AGENTS.md 4번대로 `ctfm report ask`로 묻고, 답이 올 때까지 도구를 쓰지 않고 기다린다."
 )
-FIRST_PROMPT_KOTH = (
-    "{skill} 이 디렉토리의 King of the Hill 문제를 맡아라. 먼저 AGENTS.md(규칙)와 CHALLENGE.md(문제 설명)를 읽어라. "
-    "초반 라운드 점수 확보가 최우선이다. 사이트에서 현재 라운드를 확인해 보고하고(AGENTS.md 4번), 동작하는 최선의 설계를 빠르게 만들어라."
+GOAL_KOTH = (
+    "/goal 이 디렉토리의 King of the Hill 문제에서 대회가 끝날 때까지 매 라운드 제출하고 점수를 올린다. 대회 종료를 사이트에서 확인하기 전에는 달성된 것이 아니다. "
+    "진행 방법: 먼저 AGENTS.md(규칙)와 CHALLENGE.md(문제 설명)를 읽는다({skill} 스킬 참고). 초반 라운드 점수 확보가 최우선이다. "
+    "사이트에서 현재 라운드를 확인해 `ctfm report round`로 보고하고(AGENTS.md 4번), 동작하는 최선의 후보를 빠르게 만들어 제출한다. "
+    "제출한 뒤에도 다음 라운드를 위한 개선을 계속한다. 사용자 확인이 필요하면 `ctfm report ask`로 묻고, 답이 올 때까지 도구를 쓰지 않고 기다린다."
 )
-SUCCESSOR_PROMPT = (
-    "{skill} 이 디렉토리의 King of the Hill 문제를 곧 넘겨받는다. 지금은 인수 준비 단계이고, 메인 에이전트(codex)가 왼쪽 pane에서 "
-    "계속 진행 중이다. 먼저 AGENTS.md를 읽고 8번(인수 준비) 규칙을 따라라: 제출하지 않고, 메인의 파일을 고치지 않는다. "
-    "CHALLENGE.md와 STATE.md로 지금까지의 작업을 파악해 넘겨받을 준비를 하고, 끝나면 `ctfm report ready`로 보고하라."
+GOAL_SUCCESSOR = (
+    "/goal 이 디렉토리의 King of the Hill 문제를 넘겨받을 준비를 마치고 `ctfm report ready --summary '<요약>'`을 실행해 기록됐다는 출력을 확인했다. "
+    "지금은 인수 준비 단계이고 메인 에이전트(codex)가 왼쪽 pane에서 계속 진행 중이다. 먼저 AGENTS.md를 읽고 8번(인수 준비) 규칙을 따른다: "
+    "제출하지 않고, 메인의 파일을 고치지 않는다. CHALLENGE.md와 STATE.md로 지금까지의 작업을 파악해 HANDOVER.md에 다음 전략을 준비한다({skill} 스킬 참고)."
 )
-HANDOVER_PROMPT = (
-    "전환 완료: 이제 네가 이 문제의 메인 에이전트다. 이전 메인(codex) 세션은 종료됐다. AGENTS.md 8번의 제한은 풀렸고 1~7번 전체가 적용된다.\n"
-    "1. 사이트와 STATE.md에서 현재 라운드와 이번 라운드 제출 여부를 확인하고 `ctfm report round`로 보고한다(4번).\n"
-    "2. 이번 라운드에 아직 제출하지 않았다면 검증된 최선의 후보를 먼저 제출한다(7.1).\n"
-    "3. STATE.md를 이어서 쓰고, HANDOVER.md에 세운 개선 계획을 진행한다.\n"
-    "4. 다른 팀과 경쟁하는 문제면 7.5대로 상대 전략 분석 subagent를 지금 띄운다."
+GOAL_HANDOVER = (
+    "/goal 이 King of the Hill 문제의 메인 에이전트로서 대회가 끝날 때까지 매 라운드 제출하고 점수를 올린다. 대회 종료를 사이트에서 확인하기 전에는 달성된 것이 아니다. "
+    "전환 완료: 이제 네가 이 문제의 메인 에이전트다. 이전 메인(codex) 세션은 종료됐고 AGENTS.md 8번의 제한은 풀려 1~7번 전체가 적용된다. "
+    "먼저 (1) 사이트와 STATE.md에서 현재 라운드와 이번 라운드 제출 여부를 확인해 `ctfm report round`로 보고하고 "
+    "(2) 아직 제출하지 않았다면 검증된 최선의 후보를 제출하고 (3) STATE.md를 이어 쓰며 HANDOVER.md의 계획을 진행하고 "
+    "(4) 다른 팀과 경쟁하는 문제면 7.5대로 상대 전략 분석 subagent를 띄운다."
 )
-SKILL_CALL = {"claude": "/solve-challenge", "codex": "$solve-challenge"}
-RESUME_PROMPT = "중단됐던 풀이를 이어서 계속하라. 먼저 AGENTS.md와 STATE.md를 다시 읽어라."
+SKILL_CALL = {"claude": "`solve-challenge`", "codex": "$solve-challenge"}
+RESUME_NOTE = " 중단됐던 작업을 이어서 하는 것이다. 먼저 AGENTS.md와 STATE.md를 다시 읽어라."
 TRUST_PATTERN = re.compile(r"do you trust|trust this folder|trust the files", re.I)
 BUSY_PATTERN = re.compile(r"esc to interrupt", re.I)  # claude와 codex 모두 작업 중일 때 하단에 표시
 # 모델을 더 쓸 수 없다는 화면 문구(사용량 한도, 안전 차단). [?] 실제 문구는 일부만 확인됨. 오탐을 줄이려고 KotH에서,
@@ -46,7 +55,7 @@ EFFORT_MENU = {"low": "Low", "medium": "Medium", "high": "High"}  # codex /model
 EXIT_DIALOG = re.compile(r"Background work is running|Exit and stop tasks")  # claude: 백그라운드 작업이 있을 때의 종료 확인 창
 CHECK_EVERY = 15
 NUDGE_MESSAGE = (
-    "플래그를 아직 얻지 못했다. 이 작업은 플래그를 얻어야 끝나며 포기는 없다. 지금 이어서 진행하라. "
+    "플래그를 아직 얻지 못했다. 목표는 플래그를 얻어야 끝나며 포기는 없다. 지금 이어서 진행하라. "
     "다음 가설이 있으면 바로 실행하고, 없으면 AGENTS.md 8번(막혔을 때) 절차를, 재검토를 2회 했다면 9번(insight 요청)을 수행한 뒤 계속하라. "
     "토큰/시도 제한/rate limit 때문에 사용자 확인이 필요하면 AGENTS.md 4번대로 `ctfm report ask`를 쓴다."
 )
@@ -94,11 +103,11 @@ def agent_command(store, cfg, ch, p, resume):
     if agent == "codex":
         # insane-codex는 빌드 기본값이 --yolo다. -c, -p, --enable/--disable, --dangerously-bypass-hook-trust를 주면
         # 공유 app-server 대신 내장 모드로 뜨는데, 이 빌드에는 codex-code-mode-host가 없어 셸 명령이 전부 실패한다.
-        # 그래서 Stop hook(포기 차단)과 질문 도구 차단 hook 없이 띄운다 (DESIGN.md 11절). -m은 괜찮다.
+        # 그래서 hook 없이 띄운다 (DESIGN.md 11절). -m은 괜찮다.
         # effort와 fast도 옵션으로 줄 수 없어 뜬 뒤에 데몬이 화면에서 맞춘다(sync_codex).
         parts = ["insane-codex", *(["resume", "--last"] if resume else []), *(["-m", model] if model else [])]
         return " ".join(shlex.quote(p) for p in parts)
-    # 질문 대화상자와 plan 승인 대기는 Stop hook에 걸리지 않고 조용히 멈추는 통로라 도구 자체를 끈다.
+    # 질문 대화상자와 plan 승인 대기는 알림 없이 조용히 멈추는 통로라 도구 자체를 끈다.
     return ("claude --disallowedTools AskUserQuestion,EnterPlanMode "
             f"--dangerously-skip-permissions --model {shlex.quote(model)} "
             + (f"--effort {shlex.quote(effort)} " if effort else "")
@@ -115,15 +124,14 @@ def launch_script(store, cfg, ch, p, resume):
     # 모델 전환으로 윈도우를 바꿔 띄울 때 이전 셸이 늦게 쓰는 종료 표식과 섞이지 않게 실행마다 다른 파일을 쓴다
     exit_file = launch / f"{key}.{int(time.time() * 1000)}.exit"
     koth = ch["category"] == "koth"
-    first_prompt = SUCCESSOR_PROMPT if p.get("role") == "successor" else FIRST_PROMPT_KOTH if koth else FIRST_PROMPT
-    prompt = RESUME_PROMPT if resume else first_prompt.format(skill=SKILL_CALL[agent], category=ch["category"])
+    goal = GOAL_SUCCESSOR if p.get("role") == "successor" else GOAL_KOTH if koth else GOAL
+    prompt = goal.format(skill=SKILL_CALL[agent], category=ch["category"]) + (RESUME_NOTE if resume else "")
     if ch.get("peer") and not koth:
         prompt += DUAL_PROMPT.format(agent=agent, other="claude" if agent == "codex" else "codex")
     prompt_file.write_text(prompt)
     script.write_text(
         "#!/bin/sh\n"
         f"unset {' '.join(tmux.SESSION_VARS)}\n"
-        "export CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=1000000\n"  # 포기 차단 hook이 8회 제한에 걸리지 않게
         f"export CTFM_AGENT={agent}\n"  # `ctfm report`가 동시 풀이에서 보고한 쪽을 구분한다 (codex 셸에는 전달되지 않는다)
         f"export PATH={shlex.quote(str(CTFM_BIN.parent))}:\"$PATH\"\n"  # 에이전트가 `ctfm report`로 부를 수 있게
         f"cd {shlex.quote(str(store.root / ch['dir']))} || exit 1\n"
@@ -149,7 +157,7 @@ def spawn(store, cfg, ch, resume=False, agent=None):
     if ch["category"] == "koth" and agent is None and "chain_idx" not in ch and koth_chain(cfg):
         apply_entry(ch, koth_chain(cfg), 0)
     if ch.get("dual", ch["category"] in DUAL_CATEGORIES):
-        agent = "claude"  # 포기 차단 hook과 effort 상향이 있는 쪽이 주 에이전트
+        agent = "claude"  # effort 상향이 있는 쪽이 주 에이전트
         ch.setdefault("peer", {"agent": "codex", "retries": 0})
     else:
         ch.pop("peer", None)
@@ -224,7 +232,7 @@ def promote(store, cfg, ch):
     for key in ("idle_checked", "idle_screen", "idle_since", "nudges", "fast_sent", "exited", "trust_checked", "fallback_exhausted"):
         ch.pop(key, None)
     ch.update(peer)
-    tmux.send_text(ch["pane"], HANDOVER_PROMPT)
+    tmux.type_command(ch["pane"], GOAL_HANDOVER)  # 후임의 준비 목표를 메인 목표로 바꾼다
     return clean
 
 
@@ -355,7 +363,7 @@ def watch(store, cfg, ch, p, now):
     if p.get("escalate"):
         escalate(store, ch, p, busy)
         return
-    if p.get("role") == "successor":  # 준비 중에는 Stop hook이 맡고, 준비가 끝나면 전환을 기다리며 멈춰 있는 것이 정상이다
+    if p.get("role") == "successor" and p.get("ready"):  # 준비를 마치고 전환을 기다리며 멈춰 있는 것이 정상이다
         return
     digest = hashlib.sha1(screen.encode()).hexdigest()
     if digest != p.get("idle_screen") or busy:

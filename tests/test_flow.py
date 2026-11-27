@@ -1,4 +1,4 @@
-"""mock CTFd + 격리된 tmux 서버로 수집 → 스케줄링 → 보고 → Stop hook 흐름을 검증한다. 에이전트는 sleep 더미."""
+"""mock CTFd + 격리된 tmux 서버로 수집 → 스케줄링 → 보고 → 종료 흐름을 검증한다. 에이전트는 sleep 더미."""
 import contextlib
 import io
 import json
@@ -128,8 +128,14 @@ class Flow(unittest.TestCase):
         self.assertIn("STATE.claude.md", (hard / "AGENTS.md").read_text())  # 동시 풀이 규칙은 pwn, rev에만
         self.assertNotIn("동시 풀이", (self.chal_dir("wanted") / "AGENTS.md").read_text())
         hooks = json.loads((hard / ".claude" / "settings.json").read_text())["hooks"]
-        self.assertTrue(hooks["Stop"][0]["hooks"][0]["command"].endswith("bin/ctfm hook stop"))
+        self.assertEqual(list(hooks), ["UserPromptSubmit"])  # 멈춤 방지는 Stop hook이 아니라 /goal이 맡는다
         self.assertTrue(hooks["UserPromptSubmit"][0]["hooks"][0]["command"].endswith("bin/ctfm hook prompt"))
+        prompts = {f.name: f.read_text() for f in (self.root / ".ctfm" / "launch").glob("pwn-easy_one.*.prompt")}
+        self.assertEqual(sorted(prompts), ["pwn-easy_one.claude.prompt", "pwn-easy_one.codex.prompt"])
+        for text in prompts.values():  # 초기 프롬프트는 /goal 한 줄이고 완료 조건은 solved 보고다
+            self.assertTrue(text.startswith("/goal ") and "\n" not in text and "ctfm report solved" in text and len(text) < 4000)
+        self.assertIn("$solve-challenge", prompts["pwn-easy_one.codex.prompt"])
+        self.assertIn("STATE.claude.md", prompts["pwn-easy_one.claude.prompt"])
         self.assertFalse(list(self.root.rglob(".env.*")) or (hard / ".env").exists())
         self.assertFalse((self.root / "misc" / "done").exists())
 
@@ -138,11 +144,10 @@ class Flow(unittest.TestCase):
         self.poll()
         self.assertEqual(self.status()["late ai"], "queued")
 
-        # Stop hook: 플래그 없이 멈추려 하면 차단
         easy = self.chal_dir("easy one")
-        hook_in = json.dumps({"cwd": str(easy), "hook_event_name": "Stop", "stop_hook_active": False})
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(json.loads(out)["decision"], "block")
+        hook_in = json.dumps({"cwd": str(easy)})
+        _, out = self.run_cli("hook", "stop", stdin=hook_in)  # 예전 문제 디렉토리의 Stop hook 설정: 아무것도 하지 않는다
+        self.assertEqual(out, "")
 
         # 재검토 2회 → 3번째 막힘은 blocked 안내, BLOCKED 파일 없이는 blocked 불가.
         # 동시 풀이에서 CTFM_AGENT가 없는 호출은 codex의 것이다(effort 상향 없음, 횟수는 pane별)
@@ -174,16 +179,12 @@ class Flow(unittest.TestCase):
         del self.mock.threads["1001"]  # 사용자가 포스트를 지웠으면 새로 만든다
         self.assertEqual(self.run_cli("notify", "다시")[0], 0)
         self.assertEqual(self.mock.threads["1001"]["messages"], ["다시"])
-        # blocked는 끝이 아님: 슬롯 유지, 멈춤은 계속 차단
+        # blocked는 끝이 아님: 슬롯 유지
         self.poll()
         self.assertEqual(self.status()["late ai"], "queued")
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(json.loads(out)["decision"], "block")
 
         # ask: codex가 물은 것이면 claude는 계속 풀고, `ctfm send`로 답하면 running으로 돌아간다
         self.run_cli("report", "ask", "--question", "원격이 죽어 있음", cwd=easy)
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(json.loads(out)["decision"], "block")
         self.assertEqual(self.status()["easy one"], "waiting_user")
         self.run_cli("send", "--agent", "codex", "easy one", "다시 켰다")  # 옵션은 문제 이름 앞에
         self.assertEqual(self.status()["easy one"], "running")
@@ -191,29 +192,22 @@ class Flow(unittest.TestCase):
         self.assertIn("다시 켰다", codex_screen)
         self.assertNotIn("다시 켰다", claude_screen)
 
-        # ask: claude가 물은 것이면 1회만 멈춤 허용
+        # ask: claude가 물은 것이면 답이 들어올 때까지 waiting_user
         os.environ["CTFM_AGENT"] = "claude"
         self.addCleanup(os.environ.pop, "CTFM_AGENT", None)
         self.run_cli("report", "ask", "--question", "팀 토큰이 필요함", cwd=easy)
         self.assertEqual(self.status()["easy one"], "waiting_user")
         self.assertIn("팀 토큰이 필요함", self.mock.webhook[-1])
         self.assertIn("TESTCTF-pwn:?easy_one", self.windows())  # 윈도우 이름에 상태 표시
-        for _ in range(2):  # 답이 올 때까지 멈춤을 허용하고 상태를 유지한다(유휴 재개 메시지가 들어가지 않게)
-            _, out = self.run_cli("hook", "stop", stdin=hook_in)
-            self.assertEqual(out, "")
         self.assertEqual(self.status()["easy one"], "waiting_user")
         _, out = self.run_cli("hook", "prompt", stdin=hook_in)  # 사용자가 윈도우에 직접 답을 입력했다
         self.assertEqual((out, self.status()["easy one"]), ("", "running"))
         self.assertIn("TESTCTF-pwn:easy_one", self.windows())
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(json.loads(out)["decision"], "block")
 
-        # solved: 알림, 멈춤 허용, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn. 동시 풀이의 상대에게는 종료 메시지
+        # solved: 알림, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn. 동시 풀이의 상대에게는 종료 메시지
         self.run_cli("report", "solved", "--flag", "flag{real}", cwd=easy)
         self.assertIn("flag{real}", self.mock.webhook[-1])
         self.assertIn("claude 세션이 이 문제의 플래그를 얻었다", tmux.capture(ch["peer"]["pane"]).replace("\n", ""))
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(out, "")
         self.poll()
         self.assertEqual(self.status()["late ai"], "running")
         self.assertIn("TESTCTF-ai:late_ai", self.windows())
@@ -362,7 +356,7 @@ class Flow(unittest.TestCase):
         self.assertIn("강제 종료", self.store.events_path.read_text())
 
     def test_effort_escalation(self):
-        """재검토 2회째: claude의 멈춤을 한 번 허용하고, 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
+        """재검토 2회째: claude가 멈춰 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
         with self.store.locked() as (cfg, st):
             cfg.update(idle_nudge=0, max_agents=1, agent_cmd="sh -c 'echo ready; exec sleep 600' agent")
         self.poll()
@@ -372,9 +366,7 @@ class Flow(unittest.TestCase):
         self.assertIn("재검토 1/2 기록됨. 지금 다음을", out)
         _, out = self.run_cli("report", "retry", cwd=wanted)
         self.assertIn("effort를 max로", out)
-        self.assertIn("이 턴을 여기서 끝낸다", out)
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(out, "")  # 턴이 끝나야 슬래시 명령을 넣을 수 있다
+        self.assertIn("여기서 멈추고 기다린다", out)
 
         ch = None
         deadline = time.time() + 20
@@ -390,8 +382,6 @@ class Flow(unittest.TestCase):
             self.assertIn(expected, screen)
         self.assertLess(screen.index("/effort max"), screen.index("/compact"))
         self.assertIn("ESCALATED crypto/wanted", self.store.events_path.read_text())
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)
-        self.assertEqual(json.loads(out)["decision"], "block")
         _, out = self.run_cli("report", "retry", cwd=wanted)  # 3번째 막힘: 사용자 알림 단계
         self.assertIn("ctfm report blocked", out)
 
@@ -502,8 +492,6 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.pane_count("Hill Climb"), 2)
         self.assertIn("SUCCESSOR koth/Hill_Climb", self.store.events_path.read_text())
         hook_in = json.dumps({"cwd": str(chal)})
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)  # 후임은 준비를 마칠 때까지 멈추지 못한다
-        self.assertIn("인수 준비", json.loads(out)["reason"])
         with self.assertRaises(SystemExit):  # 메인(codex)은 ready를 보고할 수 없다
             self.run_cli("report", "ready", "--summary", "x", cwd=chal)
         os.environ["CTFM_AGENT"] = "claude"
@@ -513,8 +501,6 @@ class Flow(unittest.TestCase):
         self.run_cli("report", "ready", "--summary", "기준 후보 로컬 재현 완료", cwd=chal)
         self.assertIn("기준 후보 로컬 재현 완료", self.mock.webhook[-1])
         self.assertIn("READY koth/Hill_Climb[claude]", self.store.events_path.read_text())
-        _, out = self.run_cli("hook", "stop", stdin=hook_in)  # 준비를 마치면 전환을 기다리며 멈춘다
-        self.assertEqual(out, "")
         os.environ.pop("CTFM_AGENT")
 
         # 전환: 후임이 메인이 되고 Astra pane은 종료된다
@@ -524,15 +510,14 @@ class Flow(unittest.TestCase):
         self.assertNotIn("peer", hill)
         self.assertNotIn("role", hill)
         self.assertEqual(self.pane_count("Hill Climb"), 1)
-        self.assertIn("이제 네가 이 문제의 메인 에이전트다", tmux.capture(hill["pane"], 60).replace("\n", ""))
+        screen = tmux.capture(hill["pane"], 60).replace("\n", "")  # 전환 메시지는 메인 목표로 바꾸는 /goal이다
+        self.assertIn("/goal 이 King of the Hill 문제의 메인 에이전트로서", screen)
+        self.assertIn("이전 메인(codex) 세션은 종료됐고", screen)
         self.assertIn("HANDOVER koth/Hill_Climb gpt-6.2-astra → claude-mythos-5-2", self.store.events_path.read_text())
         self.assertIn("메인 전환", self.mock.webhook[-1])
         with self.assertRaises(SystemExit):
             self.run_cli("handover", "Hill Climb")
 
-        # Stop hook은 KotH용 문구로 차단한다
-        _, out = self.run_cli("hook", "stop", stdin=json.dumps({"cwd": str(chal)}))
-        self.assertIn("KotH", json.loads(out)["reason"])
 
 
 if __name__ == "__main__":

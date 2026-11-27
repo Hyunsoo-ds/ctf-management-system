@@ -48,7 +48,7 @@ ctfm report round --round <새 라운드 번호> --summary '<진행 요약>'
 - 사이트에 대량 요청이 필요하거나 rate limit이 있는 경우
 - 대회 규칙상 허용되는지 애매한 행동
 
-묻는 방법: `ctfm report ask --question '<무엇을 왜 하려는지, 필요한 것>'` 실행 → 같은 질문을 채팅에 평문으로 쓴다 → 답을 기다린다. 질문 대화상자 도구(`AskUserQuestion`, `request_user_input` 등)는 쓰지 않는다. 사용자에게 전달되지 않는다.
+묻는 방법: `ctfm report ask --question '<무엇을 왜 하려는지, 필요한 것>'` 실행 → 같은 질문을 채팅에 평문으로 쓴다 → 답을 기다린다. 기다리는 동안에는 도구를 쓰지 않는다. 질문 대화상자 도구(`AskUserQuestion`, `request_user_input` 등)는 쓰지 않는다. 사용자에게 전달되지 않는다.
 
 ## 6. 멈추지 않는다
 

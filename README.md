@@ -241,7 +241,7 @@ tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 | | Claude Code | Codex (`insane-codex`) |
 |---|---|---|
 | 시작 | `/solve-challenge <분야>` | `$solve-challenge <분야>` |
-| 포기 차단 | Stop hook이 플래그 없는 종료를 되돌림 | Stop hook 없음 |
+| 포기 차단 | 초기 프롬프트의 `/goal`: 플래그를 얻어 보고할 때까지 스스로 턴을 이어 감 | 같음 (`/goal`) |
 | 멈춤 대응 | 데몬 유휴 감지 (보조) | 데몬 유휴 감지: 120초 넘게 입력 대기면 "계속하라" 자동 입력 |
 | 질문 대화상자 | 도구 비활성화 | `AGENTS.md` 규칙으로 금지 |
 

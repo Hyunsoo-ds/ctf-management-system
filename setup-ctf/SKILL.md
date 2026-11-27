@@ -20,7 +20,7 @@ disable-model-invocation: true
 
 - **플래그 제출은 사용자가 명시적으로 허용했을 때만, 너만 한다.** 기본은 제출하지 않는 것이고 제출은 사용자가 한다. 사용자가 "플래그 자동 제출해", "X 제출해"처럼 분명히 말했을 때만 4절의 절차로 `ctfm submit`을 쓴다. 허용 범위(대회 전체인지, 그 문제 한 번인지)를 넘지 않고, 애매하면 묻는다. 풀이 에이전트는 어떤 경우에도 제출하지 않으며 제출을 시키는 메시지도 보내지 않는다. 힌트 해제처럼 사이트 상태를 바꾸는 다른 요청은 보내지 않고, 어댑터의 수집은 GET만 쓴다. KotH 문제는 별도다(6절): KotH 에이전트는 위임받은 접근 권한으로 그 문제의 라운드를 조회하고, 정해진 제출 절차가 있을 때만 제출한다.
 - **인증 정보는 `<CTF>/.env`에만 둔다.** 토큰이나 쿠키를 문제 디렉토리의 파일, 풀이 에이전트에게 보내는 메시지, Discord 알림에 넣지 않는다. 예외는 `ctfm`이 KotH 문제 디렉토리에 만드는 `CTF_ACCESS.env`뿐이다.
-- **풀이 에이전트는 포기하지 않는다.** 플래그 없이 멈추려 하면 Stop hook이 되돌린다. 막힘 알림(`BLOCKED`)은 사용자가 insight를 줄 기회이고, 에이전트는 그 뒤에도 계속 푼다. 에이전트에게 "그만해도 된다"는 취지의 메시지를 보내지 않는다. 세션을 끝내는 것은 사용자가 지시했을 때의 `ctfm kill`뿐이다.
+- **풀이 에이전트는 포기하지 않는다.** 초기 프롬프트가 `/goal`(완료 조건: 플래그를 얻어 `ctfm report solved` 실행)이라, 목표가 이뤄질 때까지 에이전트가 스스로 턴을 이어 간다. 막힘 알림(`BLOCKED`)은 사용자가 insight를 줄 기회이고, 에이전트는 그 뒤에도 계속 푼다. 에이전트에게 "그만해도 된다"는 취지의 메시지를 보내지 않는다. 세션을 끝내는 것은 사용자가 지시했을 때의 `ctfm kill`뿐이다.
 
 ## 1. 셋업 (호출 즉시)
 
@@ -33,7 +33,7 @@ disable-model-invocation: true
    ```
    생략 시 기본값은 max-agents 8, 에이전트 claude, model `claude-opus-5`(effort `xhigh`), codex 모델 `gpt-6-sol`(effort `medium`, fast 켬), 즉시 시작이다. `--model`은 claude용, `--codex-model`은 codex용이다. effort와 fast는 `ctfm set effort|codex-effort|codex-fast <값>`으로 바꾼다(KotH에는 적용되지 않는다).
    **pwn과 rev 문제는 동시 풀이다**(퍼블 경쟁용): 한 윈도우를 좌우로 나눠 왼쪽 pane에 codex, 오른쪽 pane에 claude를 띄운다. 자세한 것은 5절.
-   codex 에이전트는 `insane-codex`(빌드 기본값이 `--yolo`)로 뜨고 `$solve-challenge`로 시작한다. **codex에는 Stop hook(포기 차단)이 없다.** 대신 데몬이 플래그 없이 입력 대기로 120초 넘게 멈춘 에이전트에 계속하라는 메시지를 자동으로 넣는다(`NUDGED`, claude에도 적용, 사용자가 그 윈도우를 보고 있으면 건너뜀, `ctfm set idle-nudge <초>`로 조정, 0이면 끔). 에이전트가 `ASK`로 질문하면 답이 올 때까지 상태가 `waiting_user`로 남고, 그동안은 계속하라는 메시지도 들어가지 않는다. `ctfm send`로 답을 보내면 `running`으로 돌아간다. 사용자가 윈도우에 직접 답한 경우 claude는 자동으로 돌아가지만, codex는 `ctfm send --agent codex <문제> "계속하라"`로 상태를 되돌려야 한다.
+   codex 에이전트는 `insane-codex`(빌드 기본값이 `--yolo`)로 뜬다. claude와 codex 모두 초기 프롬프트는 `/goal <목표>`다. 목표가 남은 채로 에이전트가 멈춰 있는 경우(claude는 도구 없는 턴이 이어지면 "Goal paused", codex는 목표를 blocked로 둠)는 메시지가 들어오면 다시 이어 간다. 그래서 데몬이 보조로, 플래그 없이 입력 대기로 120초 넘게 멈춘 에이전트에 계속하라는 메시지를 자동으로 넣는다(`NUDGED`, 사용자가 그 윈도우를 보고 있으면 건너뜀, `ctfm set idle-nudge <초>`로 조정, 0이면 끔). 에이전트가 `ASK`로 질문하면 답이 올 때까지 상태가 `waiting_user`로 남고, 그동안은 계속하라는 메시지도 들어가지 않는다. `ctfm send`로 답을 보내면 `running`으로 돌아간다. 사용자가 윈도우에 직접 답한 경우 claude는 자동으로 돌아가지만, codex는 `ctfm send --agent codex <문제> "계속하라"`로 상태를 되돌려야 한다.
 3. Discord 확인: `ctfm notify "setup-ctf 시작: <CTF 이름>"`. webhook은 **포럼 채널**의 것이어야 한다. 알림은 문제마다 `[분야] 문제이름` 포스트 하나에 모이고(플래그, 막힘, 질문, KotH 라운드 요약), `ctfm notify`는 대회 이름의 공통 포스트로 간다. 실패하면 `.env`의 `DISCORD_WEBHOOK_URL`(이 디렉토리의 `.env` → 스킬 저장소의 `.env` 순으로 찾는다)을 사용자와 확인한다.
 4. 로그인 확인: `ctfm check`.
    - `login_ok: true`면 통과. 대회 시작 전에는 `list_error`(예: 403)가 함께 나오는 것이 정상이다.
@@ -58,7 +58,7 @@ disable-model-invocation: true
 - 윈도우 이름 앞 표시: `✔` 플래그 획득(풀이 정리 후 곧 윈도우가 지워진다), `!` 막힘 알림을 보냄(풀이는 계속 중), `?` 사용자 답을 기다림.
 - 전체를 한 화면에서 고르기: tmux 안에서 `prefix + w`(choose-tree).
 - 데몬 로그: `tmux attach -t <ctf>-ctl`.
-- 사용자가 윈도우에 직접 입력하거나 Esc로 끊는 것은 Stop hook에 막히지 않는다.
+- 사용자는 윈도우에 직접 입력하거나 Esc로 끊을 수 있다. Esc로 끊어도 목표는 남아 있어서 다음 메시지부터 다시 이어 간다. 목표 자체를 풀려면 그 pane에서 `/goal clear`(codex는 `/goal pause`도 가능)를 입력한다.
 
 ## 2. 이벤트 대응
 
@@ -140,7 +140,7 @@ disable-model-invocation: true
 **effort 상향 (KotH를 뺀 모든 문제의 claude)**: `xhigh`로 시작한다. 막힘 보고(`ctfm report retry`)가 기준이다.
 
 1. 1번째 막힘: 재검토 체크리스트.
-2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 턴을 끝내면(이때만 Stop hook이 멈춤을 허용한다) 데몬이 `/effort max` → `/compact`를 입력하고, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). 이후 그 문제는 resume해도 max로 뜬다.
+2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 멈추면(목표가 남아 있어 도구 없는 짧은 턴이 몇 번 이어진 뒤 일시 정지된다, 20초 안팎) 데몬이 `/effort max` → `/compact`를 입력하고, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). 이후 그 문제는 resume해도 max로 뜬다.
 3. 3번째 막힘: `BLOCKED.md` 작성 → Discord 알림(`BLOCKED`) → 계속 풀이. 횟수가 초기화되고, 이미 max인 다음 사이클에서는 재검토 2회 → 알림만 반복한다.
 
 codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
@@ -161,7 +161,7 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 - **경쟁형 문제**: 다른 팀의 제출물에 따라 점수가 달라지는 문제면, 메인이 claude로 전환된 시점부터(초반 Astra 세션은 하지 않는다) 메인 에이전트가 기존 전략을 진행하면서 상대 전략을 분석하는 subagent를 하나 병렬로 돌려 `OPPONENTS.md`에 정리하고 대응 방안을 후보에 반영한다(`templates/KOTH_STRATEGY.md` 7.5).
 - **fast**: Astra는 메인인 동안 라운드 4까지 `/fast`를 켜고(전환이 늦어진 경우 포함), 그 뒤에도 메인이면 끈다. 라운드는 에이전트가 사이트에서 확인해 `ctfm report round`로 보고하고, 데몬이 codex 하단 표시를 보고 `/fast`를 입력해 맞춘다. 라운드 보고가 아직 없으면 켠 상태로 둔다.
 - **사이트 접근 위임**: KotH 문제 디렉토리에는 `CTF_ACCESS.env`(사이트 주소, 인증 정보, 문제 ID, 권한 600. Discord webhook은 넣지 않음)가 생기고, 에이전트는 이 문제의 라운드, 점수판, 공지를 직접 조회할 수 있다. 제출은 `templates/KOTH_STRATEGY.md`(AGENTS.md 7번)를 따른다: 매 라운드 반드시 제출하고, 라운드 1~3은 간단하지만 확실한 규칙 기반 후보로 점수부터 확보한다. 제출 방법이 불확실하거나 제출 제한·감점이 있으면 에이전트가 `ASK`로 묻는다.
-- **규칙**: `AGENTS.md`는 KotH용 템플릿(`templates/AGENTS_KOTH.md`)으로 만든다. Stop hook과 유휴 재개 메시지도 "대회 끝까지 개선을 계속하라"는 KotH용 문구를 쓴다.
+- **규칙**: `AGENTS.md`는 KotH용 템플릿(`templates/AGENTS_KOTH.md`)으로 만든다. 초기 프롬프트의 `/goal`은 "대회가 끝날 때까지 매 라운드 제출하고 점수를 올린다"이고, 유휴 재개 메시지도 KotH용 문구를 쓴다. 전환(`ctfm handover`) 때는 후임에게 메인용 `/goal`을 새로 입력한다.
 - 사용자가 "이 KotH는 Mythos로 바꿔"라고 하면 `ctfm kill X` 후 `ctfm spawn X --now --agent claude --model claude-mythos-5-2`. 직접 고른 모델에는 자동 전환과 fast 조정을 하지 않는다.
 
 ## 7. 이 대회의 특징을 기억한다

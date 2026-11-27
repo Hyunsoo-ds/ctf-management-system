@@ -1,4 +1,4 @@
-"""문제 수집: 첨부 다운로드 → 압축 해제 → CHALLENGE.md / AGENTS.md / CLAUDE.md / Stop hook 생성."""
+"""문제 수집: 첨부 다운로드 → 압축 해제 → CHALLENGE.md / AGENTS.md / CLAUDE.md / hook 설정 생성."""
 import json
 import os
 import shutil
@@ -178,7 +178,7 @@ def intake(store, http, adapter, ch):
         write_access(store, ch)
     (chal_dir / "CLAUDE.md").write_text("@AGENTS.md\n")
     (chal_dir / ".claude").mkdir()
-    hooks = {event: [{"hooks": [{"type": "command", "command": f"{CTFM_BIN} hook {name}", "timeout": 30}]}]
-             for event, name in (("Stop", "stop"), ("UserPromptSubmit", "prompt"))}
-    (chal_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": hooks}, indent=1))
+    # 질문(`report ask`)에 대한 답이 들어온 것을 알기 위한 hook. 멈춤 방지는 hook이 아니라 초기 프롬프트의 /goal이 맡는다
+    hook = {"type": "command", "command": f"{CTFM_BIN} hook prompt", "timeout": 30}
+    (chal_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [hook]}]}}, indent=1))
     marker.unlink()

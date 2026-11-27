@@ -24,20 +24,8 @@ RETRY_CHECKLIST = """재검토 {n}/{limit} 기록됨. 지금 다음을 순서대
 4. 새 가설을 세우고 풀이를 재개한다."""
 ESCALATE_NOTICE = """재검토 {n}/{limit} 기록됨. 이번에는 effort를 max로 올리고 컨텍스트를 compact한 뒤 처음부터 엄밀하게 다시 본다.
 1. STATE.md를 지금 최신으로 갱신한다: 풀이 논리, 각 전제의 [검증됨]/[추정], 버린 접근과 이유, 원격 접속 정보. compact 뒤에는 이 파일이 기준이다.
-2. 갱신했으면 이 턴을 여기서 끝낸다(이번에 한해 멈춤이 허용된다). 다른 작업을 더 하지 않는다.
-3. 턴이 끝나면 effort 변경과 compact가 자동으로 실행되고 재검토 지시가 입력된다. 그 지시를 따라 재개한다."""
-STOP_REASON = """플래그를 아직 얻지 못했다. 이 작업은 플래그를 얻어야 끝나며 포기는 없다. 지금 멈추지 말고 이어서 진행하라.
-- 다음 가설이 있으면 바로 실행한다. 백그라운드 작업을 기다리는 중이면 그동안 다른 가설을 검증한다.
-- 가설이 없으면 AGENTS.md 8번(막혔을 때) 절차를 수행한다. 재검토를 2회 했다면 9번(insight 요청) 후 계속한다.
-- AGENTS.md 4번에 해당하는 경우(토큰, 시도 횟수 제한, rate limit, CLI로 풀기 어려운 문제 등)에만 `ctfm report ask`로 질문하고 멈출 수 있다.
-- 플래그를 얻었다면 `ctfm report solved --flag '<flag>'`를 실행한다."""
-KOTH_STOP_REASON = """KotH는 대회가 끝날 때까지 점수를 올리는 문제라 끝이 없다. 지금 멈추지 말고 이어서 진행하라.
-- 현재 라운드를 확인해 바뀌었으면 `ctfm report round --round <번호> --summary '<진행 요약>'`으로 보고한다(AGENTS.md 4번).
-- 이번 라운드에 아직 제출하지 않았다면 마감 전에 검증된 최선의 후보를 먼저 제출한다(AGENTS.md 7.1).
-- 다음 라운드를 위한 개선을 계속한다. 아이디어가 없으면 AGENTS.md 6번 절차를 따른다.
-- 제출 절차가 없거나 제출 제한 때문에 사용자 확인이 필요하면 `ctfm report ask`로 질문하고 멈출 수 있다."""
-SUCCESSOR_STOP_REASON = """인수 준비가 아직 끝나지 않았다. AGENTS.md 8번의 준비 항목을 마저 수행하라.
-끝났으면 `ctfm report ready --summary '<준비 내용 요약>'`을 실행한다. 그 뒤에는 전환 메시지를 기다리며 멈출 수 있다."""
+2. 갱신했으면 여기서 멈추고 기다린다. 도구를 더 쓰지 않고, 계속하라는 자동 안내가 와도 "effort 변경 대기 중"이라고만 답한다.
+3. 네가 멈추면 effort 변경과 compact가 자동으로 실행되고 재검토 지시가 입력된다. 그 지시를 따라 재개한다."""
 
 
 def store_here():
@@ -423,43 +411,27 @@ def cmd_report(a):
             ch.update(status="waiting_user", asker=p["agent"])
             store.emit("ASK", f"{who} 질문 대기: {a.question}", echo=False)
             message = f"❓ **{name}** 사용자 확인 필요\ntmux `{ch.get('tmux_session')}:{ch['slug']}`\n{a.question}"
-            print("알림 전송됨. 같은 질문을 채팅에 쓰고 사용자의 답을 기다려라.")
+            print("알림 전송됨. 같은 질문을 채팅에 쓰고 사용자의 답을 기다려라. 답이 올 때까지 도구를 쓰지 않는다.")
         tmux.mark(ch)
     if message:
         discord(store, message, ch)
 
 
 def cmd_hook(a):
-    """Claude Code hook. stop: 플래그 없이 멈추려는 턴을 되돌린다. prompt: 질문에 대한 답이 들어온 것을 기록한다.
-    판단할 수 없으면 멈춤을 허용한다."""
+    """Claude Code hook. prompt(UserPromptSubmit): 질문에 대한 답이 들어온 것을 기록한다.
+    stop은 아무것도 하지 않는다: 멈춤 방지는 `/goal`이 맡는다. 예전 문제 디렉토리의 Stop hook 설정이 오류를 내지 않게 남겨 둔다."""
     try:
         data = json.load(sys.stdin)
         root = find_root(data.get("cwd"))
-        if root is None:
+        if a.event != "prompt" or root is None:
             return
         store = Store(root)
         with store.locked() as (cfg, st):
             ch = current_challenge(st, store, data["cwd"])
-            if ch is None:
-                return
-            asked = ch["status"] == "waiting_user" and ch.get("asker") != "codex"  # claude가 묻고 답을 기다리는 중
-            if a.event == "prompt":  # 사용자가 윈도우에 직접 입력했거나 `ctfm send`가 들어왔다: 답을 받았다
-                if asked:
-                    ch["status"] = "running"
-                    tmux.mark(ch)
-                return
-            p = agent_pane(ch, "claude")  # hook은 claude에만 있다
-            if p.get("escalate"):  # effort 상향 대기 중: 턴이 끝나야 데몬이 /effort, /compact를 입력할 수 있다
-                return
-            if p.get("role") == "successor":  # KotH 후임: 준비를 마치면 전환을 기다리며 멈춘다
-                if not p.get("ready") and ch["status"] in ACTIVE:
-                    print(json.dumps({"decision": "block", "reason": SUCCESSOR_STOP_REASON}, ensure_ascii=False))
-                return
-            if asked:  # 답이 올 때까지 멈춰 있게 둔다. 상태를 바꾸면 데몬이 유휴로 보고 계속하라는 메시지를 넣는다
-                return
-            if ch["status"] in ACTIVE:  # 동시 풀이의 codex가 질문한 것이면 claude는 계속 푼다
-                reason = KOTH_STOP_REASON if ch["category"] == "koth" else STOP_REASON
-                print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+            # claude가 묻고 기다리던 중에 사용자가 윈도우에 직접 입력했거나 `ctfm send`가 들어왔다: 답을 받았다
+            if ch and ch["status"] == "waiting_user" and ch.get("asker") != "codex":
+                ch["status"] = "running"
+                tmux.mark(ch)
     except Exception as e:
         print(f"ctfm hook 오류: {e}", file=sys.stderr)
 
