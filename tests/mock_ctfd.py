@@ -41,7 +41,7 @@ class MockCTFd:
         self.challenges = {}  # id -> {name, category, value, solves, solved_by_me, description, connection_info, files, ...}
         self.started = True
         self.webhook = []     # Discord로 전송된 content 목록
-        self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"} (+ 태그를 붙여 만들었으면 "tags")
+        self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages", "archived"} (+ 태그가 붙었으면 "tags")
         self.tags = {}        # 포럼의 태그: 이름 -> ID. 봇 토큰(BOT_TOKEN)으로만 읽을 수 있다
         self.writes = []      # webhook과 플래그 제출 외의 쓰기 요청 (있으면 안 됨)
         self.pages = {}       # 인증 없이 보여 줄 HTML 페이지: 경로 -> bytes (리허설용 화면)
@@ -78,10 +78,13 @@ class MockCTFd:
                     return self.reply(200, mock.pages[path], "text/html; charset=utf-8")
                 if path == "/webhook":  # webhook 조회: 채널 ID까지만 준다
                     return self.reply(200, {"channel_id": CHANNEL})
-                if path == f"/discord/channels/{CHANNEL}":
+                if path.startswith("/discord/channels/"):  # 봇 API: 포럼 채널(태그 목록) 또는 포스트
                     if self.headers.get("Authorization") != f"Bot {BOT_TOKEN}":
                         return self.reply(401, {"message": "401: Unauthorized", "code": 0})
-                    return self.reply(200, {"available_tags": [{"id": i, "name": n} for n, i in mock.tags.items()]})
+                    target = path.rsplit("/", 1)[1]
+                    if target == CHANNEL:
+                        return self.reply(200, {"available_tags": [{"id": i, "name": n} for n, i in mock.tags.items()]})
+                    return self.reply(200, {"parent_id": CHANNEL, "applied_tags": mock.threads[target].get("tags", [])})
                 if self.headers.get("Authorization") != f"Token {TOKEN}":
                     return self.reply(401, {"message": "unauthorized"})
                 if path == "/api/v1/users/me":
@@ -109,12 +112,13 @@ class MockCTFd:
                         if set(data.get("applied_tags", [])) - set(mock.tags.values()):  # 없는 태그 ID: 실제 Discord의 응답 그대로
                             return self.reply(400, {"message": "A tag is required to create a forum post in this channel", "code": 40067})
                         thread = str(1000 + len(mock.threads))
-                        mock.threads[thread] = {"name": data["thread_name"], "messages": []}
+                        mock.threads[thread] = {"name": data["thread_name"], "messages": [], "archived": False}
                         if data.get("applied_tags"):
                             mock.threads[thread]["tags"] = data["applied_tags"]
                     if thread not in mock.threads:
                         return self.reply(400, {"message": "Unknown Channel" if thread else "must have a thread_name or thread_id"})
                     mock.threads[thread]["messages"].append(data["content"])
+                    mock.threads[thread]["archived"] = False  # 닫힌 포스트는 새 메시지가 오면 다시 열린다
                     mock.webhook.append(data["content"])
                     return self.reply(200, {"channel_id": thread})
                 if path == "/api/v1/challenges/attempt" and self.headers.get("Authorization") == f"Token {TOKEN}":
@@ -128,6 +132,15 @@ class MockCTFd:
                     return self.reply(200, {"success": True, "data": {"status": status, "message": status.capitalize()}})
                 mock.writes.append(self.path)
                 return self.reply(403, {"message": "forbidden"})
+
+            def do_PATCH(self):  # 봇 API: 포스트의 태그와 닫힘 상태 변경
+                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+                thread = mock.threads.get(self.path.rsplit("/", 1)[1])
+                if not self.path.startswith("/discord/channels/") or thread is None or self.headers.get("Authorization") != f"Bot {BOT_TOKEN}":
+                    mock.writes.append(self.path)
+                    return self.reply(403, {"message": "Missing Permissions", "code": 50013})
+                thread.update(tags=data["applied_tags"], archived=data["archived"])
+                return self.reply(200, {})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()

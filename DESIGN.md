@@ -350,7 +350,10 @@ download(cfg, file, dest)
   - 토큰이 없으면 태그 없이 만든다. 조회에 실패하면 태그 없이 만들고 `NOTIFY_ERROR`를 남긴다(알림은 잃지 않는다).
   - 확인한 것 (실제 포럼): `applied_tags`는 태그 이름이 아니라 ID만 받는다. webhook 토큰으로는 태그를 읽을 방법이 없다: webhook 조회, 포스트 생성/추가 응답, webhook이 만든 메시지 조회 어디에도 태그 정보가 없고, 채널·포스트 목록 조회는 401이다. 이 포럼은 "태그 필수"가 켜져 있는데도(채널 `flags`에 16) webhook의 태그 없는 생성은 성공한다. 없는 태그 ID를 넣으면 400 `A tag is required to create a forum post in this channel`(40067)로 거부된다. `ctfm`으로 만든 포스트에 `pwn` 태그가 붙는 것을 봇 조회로 확인했다.
   - 처음에는 `.env`의 `DISCORD_FORUM_TAGS=pwn:<ID>,...`로 ID를 직접 받았는데, ID를 구하려면 어차피 봇이 필요해서 없앴다.
-  - 이미 만들어진 포스트에는 태그를 나중에 붙이지 않는다. webhook에는 포스트 수정 권한이 없고, 봇으로 하려면 스레드 관리 권한이 필요하다(지금은 만들지 않은 기능).
+  - 분야 태그는 포스트를 만들 때만 붙인다. 이미 만들어진 포스트에 뒤늦게 분야 태그를 붙이지는 않는다.
+- **풀린 문제의 포스트 표시** (2026-11-27, 사용자 결정): 문제 상태가 `solved`인 알림을 보낸 뒤 그 포스트에 `solved` 태그를 더하고 닫는다(`notify.mark_solved`). 봇 토큰으로 `GET /channels/<포스트>`(현재 태그, `parent_id`) → 포럼의 `available_tags`에서 `solved` ID → `PATCH /channels/<포스트>` `{applied_tags, archived: true}`. 기존 태그는 그대로 두고 `solved`만 더한다. 봇에 그 포럼의 포스트 관리(Manage Threads) 권한이 필요하다. 토큰이 없으면 하지 않고, 실패하면 `NOTIFY_ERROR`만 남긴다.
+  - 닫힌 포스트는 webhook 메시지가 오면 다시 열린다(확인). 그래서 풀린 뒤의 알림(예: 플래그 제출 결과)을 보낼 때마다 다시 닫는다. 닫힌 포스트에 같은 `PATCH`를 다시 보내도 200이다(확인).
+  - 실제 포럼에서 `ctfm` 알림 경로로 `solved` 태그 추가와 닫힘을 확인했다. `solved` 태그가 포럼에 없으면 태그 없이 닫기만 한다.
 - **codex effort 상향** (2026-11-27, 사용자 결정: claude와 codex가 같게 동작): 2회째 `report retry`의 상향 대상에서 에이전트 조건을 뺐다(KotH 제외, 아직 max가 아닐 때는 그대로). 상태 흐름(pending → ready → compacting)과 안내문, 재검토 지시는 claude와 같고 입력만 다르다. effort는 `/effort max` 대신 `set_codex_effort(pane, "max")`(`/model` 메뉴, 이 세션만)로 올리고, `/compact`는 codex에도 있다.
   - pane에 `effort=max`가 기록된다. `settings()`가 codex도 pane의 effort를 설정 `codex_effort`보다 먼저 보도록 바꿨다. 그래서 `sync_codex`가 medium으로 되돌리지 않고, resume 뒤에도 max로 다시 맞추며, 메뉴 조작이 실패했을 때도 다시 시도한다. KotH의 codex는 체인 항목에 effort가 있을 때만 맞춘다(기본 체인에는 없어 동작이 그대로다).
   - 확인한 동작 (insane-codex 0.170, 격리된 tmux): 멈추라는 안내를 받은 codex는 도구 없는 짧은 턴을 두세 번 거친 뒤 목표를 세워 두고 멈춘다(하단 `Goal paused (/goal resume)`, 목표를 blocked로 기록한 경우에는 `Goal stalled (/goal resume)`). 그 상태에서 effort max 전환(`Model changed to gpt-6-sol max for this session only`, config 불변), `/compact`(약 10초 동안 `esc to interrupt` 표시, `Context compacted`)가 됐다. compact 뒤에도 목표는 멈춘 채 남는다.

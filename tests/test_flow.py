@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup-ctf"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ctfm import adapters, cli, daemon, state, tmux  # noqa: E402
+from ctfm import adapters, cli, daemon, notify, state, tmux  # noqa: E402
 from mock_ctfd import BOT_TOKEN, TOKEN, MockCTFd, make_zip  # noqa: E402
 
 SOCKET = f"ctfm-test-{os.getpid()}"
@@ -176,7 +176,7 @@ class Flow(unittest.TestCase):
         self.assertEqual([t["name"] for t in self.mock.threads.values()], ["[pwn] easy one"])
         self.assertEqual(len(self.mock.threads["1000"]["messages"]), len(self.mock.webhook))
         self.run_cli("notify", "관리 세션 공지")
-        self.assertEqual(self.mock.threads["1001"], {"name": "TESTCTF", "messages": ["관리 세션 공지"]})
+        self.assertEqual(self.mock.threads["1001"], {"name": "TESTCTF", "messages": ["관리 세션 공지"], "archived": False})
         del self.mock.threads["1001"]  # 사용자가 포스트를 지웠으면 새로 만든다
         self.assertEqual(self.run_cli("notify", "다시")[0], 0)
         self.assertEqual(self.mock.threads["1001"]["messages"], ["다시"])
@@ -377,6 +377,18 @@ class Flow(unittest.TestCase):
         del self.mock.tags["pwn"]
         self.run_cli("report", "ask", "--question", "원격 다운", cwd=easy)
         self.assertEqual(tags()["[pwn] easy one"], ["333"])  # 분야 태그가 없으면 misc
+
+        # 풀린 문제: 포스트에 solved 태그를 더하고 닫는다. 이후 알림으로 다시 열려도 다시 닫는다
+        self.mock.tags["solved"] = "444"
+        post = next(t for t in self.mock.threads.values() if t["name"] == "[crypto] wanted")
+        self.assertEqual(post["archived"], False)
+        self.run_cli("report", "solved", "--flag", "flag{real}", cwd=wanted)
+        self.assertEqual((post["tags"], post["archived"]), (["222", "444"], True))
+        ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "wanted")
+        notify.discord(self.store, "풀린 뒤의 알림", ch)
+        self.assertEqual((post["messages"][-1], post["tags"], post["archived"]), ("풀린 뒤의 알림", ["222", "444"], True))
+        self.assertEqual(self.mock.writes, [])
+        self.assertNotIn("solved 태그를 달고 닫지 못함", self.store.events_path.read_text())
 
     def test_effort_escalation(self):
         """재검토 2회째: claude가 멈춰 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
