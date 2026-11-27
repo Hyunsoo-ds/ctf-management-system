@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 일은 두 층으로 나뉜다.
 
-- **`ctfm` 데몬(LLM 없음)**: 30초마다 문제 사이트를 폴링하고, 새 문제를 내려받아 `<분야>/<문제이름>/`에 풀고, 분야별 tmux 세션(`<ctf>-pwn`, `<ctf>-web`, ...)에 문제마다 윈도우를 만들어 풀이 에이전트를 띄운다. 속도가 중요한 경로라 네 판단을 거치지 않는다.
+- **`ctfm` 데몬(LLM 없음)**: 30초마다 문제 사이트를 폴링하고, 새 문제를 내려받아 `<분야>/<문제이름>/`에 풀고, 분야별 tmux 세션(`pwn_<ctf>`, `web_<ctf>`, ...)에 문제마다 윈도우를 만들어 풀이 에이전트를 띄운다. 속도가 중요한 경로라 네 판단을 거치지 않는다.
 - **너(관리 세션)**: 셋업과 로그인 검증, CTFd가 아닌 사이트의 어댑터 작성, 이벤트 대응, 사용자 지시 처리, 이 대회의 특징 기록.
 
 명령은 `${CLAUDE_SKILL_DIR}/bin/ctfm`이다(아래에서 `ctfm`). 전체 설계는 `${CLAUDE_SKILL_DIR}/../DESIGN.md`에 있다.
@@ -54,10 +54,10 @@ disable-model-invocation: true
 
 풀이 에이전트는 사용자의 기본 tmux 서버에 뜬 일반 세션에서 대화형 claude 또는 codex로 돌고 있다. 사용자는 언제든 붙어서 진행 상황을 그대로 보고 직접 입력할 수 있어야 한다. 셋업 보고와 `BLOCKED`/`ASK` 전달 때 접속 명령을 함께 알려 준다.
 
-- 분야별 세션: `tmux attach -t <ctf>-pwn` (`-web`, `-rev`, `-crypto`, `-ai`, `-misc`, `-koth`). 문제 하나가 윈도우 하나이고 윈도우 이름이 문제 이름이다. pwn과 rev 윈도우는 pane이 둘이다(왼쪽 codex, 오른쪽 claude).
+- 분야별 세션: `tmux attach -t pwn_<ctf>` (`web_`, `rev_`, `crypto_`, `ai_`, `misc_`, `koth_`). 세션 이름은 `<분야>_<CTF 이름>`이다(예: `pwn_whitehat2026`). 문제 하나가 윈도우 하나이고 윈도우 이름이 문제 이름이다. pwn과 rev 윈도우는 pane이 둘이다(왼쪽 codex, 오른쪽 claude).
 - 윈도우 이름 앞 표시: `✔` 플래그 획득(풀이 정리 후 곧 윈도우가 지워진다), `!` 막힘 알림을 보냄(풀이는 계속 중), `?` 사용자 답을 기다림.
 - 전체를 한 화면에서 고르기: tmux 안에서 `prefix + w`(choose-tree).
-- 데몬 로그: `tmux attach -t <ctf>-ctl`.
+- 데몬 로그: `tmux attach -t ctl_<ctf>`.
 - 사용자는 윈도우에 직접 입력하거나 Esc로 끊을 수 있다. Esc로 끊어도 목표는 남아 있어서 다음 메시지부터 다시 이어 간다. 목표 자체를 풀려면 그 pane에서 `/goal clear`(codex는 `/goal pause`도 가능)를 입력한다.
 
 ## 2. 이벤트 대응
@@ -147,7 +147,7 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 
 ## 6. King of the Hill (KotH) 문제
 
-사이트 카테고리나 문제 이름에 `KotH`/`King of the Hill`이 들어가면 `koth` 유형으로 분류된다(`koth/<문제>/`, tmux `<ctf>-koth`). 사이트 카테고리 이름이 다르면 `ctfm set category-map '<사이트 카테고리>=koth'`로 지정한다. jeopardy와 다른 점:
+사이트 카테고리나 문제 이름에 `KotH`/`King of the Hill`이 들어가면 `koth` 유형으로 분류된다(`koth/<문제>/`, tmux `koth_<ctf>`). 사이트 카테고리 이름이 다르면 `ctfm set category-map '<사이트 카테고리>=koth'`로 지정한다. jeopardy와 다른 점:
 
 - **대기 순서 맨 앞**: 초반 라운드 점수 확보가 핵심이라 `--priority` 문제보다도 먼저 슬롯을 받는다(슬롯은 공유).
 - **메인 전환 (네가 실행한다)**: Astra(fast)가 초반을 맡고 **라운드 4부터 Mythos 5.2가 맡는 것이 목표**다. codex 사용량이 적어 오래 못 쓰기 때문이다.
@@ -175,5 +175,5 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 
 - 풀이 에이전트 규칙은 각 문제 디렉토리의 `AGENTS.md`에 있다(원본: `${CLAUDE_SKILL_DIR}/templates/AGENTS.md`).
 - 상태는 `.ctfm/state.json`, 설정은 `.ctfm/config.json`. 직접 고치지 말고 `ctfm` 명령을 쓴다(데몬과 잠금을 공유한다).
-- 데몬은 tmux `<ctf>-ctl:daemon` 윈도우에서 돈다. 죽었으면 `ctfm up`으로 다시 띄운다. 상태는 파일에 있으므로 이어서 동작한다.
+- 데몬은 tmux `ctl_<ctf>:daemon` 윈도우에서 돈다. 죽었으면 `ctfm up`으로 다시 띄운다. 상태는 파일에 있으므로 이어서 동작한다.
 - 이 세션이 끝나도 데몬과 풀이 에이전트는 계속 돈다. 나중에 같은 디렉토리에서 다시 관리하려면 8번(이벤트 구독)부터 하면 된다.

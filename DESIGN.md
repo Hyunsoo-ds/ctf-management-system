@@ -43,12 +43,12 @@ CTF에서 문제마다 파일을 받고, 설명을 프롬프트에 붙이고, tm
                          │  ③ ctfm daemon 기동     ④ Monitor로 events.log 구독
                          │  ⑤ 사용자 지시 → ctfm kill / spawn / prioritize / send
                          ▼
-              ctfm daemon (tmux `<ctf>-ctl` 세션, LLM 없음)
+              ctfm daemon (tmux `ctl_<ctf>` 세션, LLM 없음)
                  30초마다: adapter.list → diff → fetch/압축 해제 → 큐 → spawn
                  5초마다 : 슬롯/종료 감지 → 다음 문제 spawn
                          │ tmux new-window
                          ▼
-   tmux `<ctf>-pwn` │ `<ctf>-web` │ `<ctf>-rev` │ `<ctf>-crypto` │ `<ctf>-ai` │ `<ctf>-misc`
+   tmux `pwn_<ctf>` │ `web_<ctf>` │ `rev_<ctf>` │ `crypto_<ctf>` │ `ai_<ctf>` │ `misc_<ctf>`
       윈도우 1개 = 문제 1개 = claude (Opus 5, bypass) + /solve-challenge
                          │ ctfm report solved | retry | blocked | ask
                          ▼
@@ -126,7 +126,7 @@ tests/                        # 단위 테스트 + mock_ctfd.py
 3. `ctfm check`: 플랫폼 판별(CTFd면 `/api/v1/` 응답 형태) 후 로그인 확인(CTFd: `GET /api/v1/users/me`). 실패하면 그 자리에서 사용자에게 보고.
 4. CTFd가 아니면: 관리 세션이 사이트(HTML, JS, API 호출)를 분석해 `templates/adapter_skeleton.py`를 채운 `.ctfm/adapter.py`를 작성하고 `ctfm check`로 검증.
 5. 규칙 페이지가 보이면 읽어서 `CTF_NOTES.md`에 기록: 플래그 포맷, 금지 행위(브루트포스 등), 인스턴스 방식, rate limit.
-6. `ctfm up`으로 데몬을 tmux `<ctf>-ctl` 세션에 기동하고 `Monitor`로 `events.log` 구독 시작.
+6. `ctfm up`으로 데몬을 tmux `ctl_<ctf>` 세션에 기동하고 `Monitor`로 `events.log` 구독 시작.
 
 ### 5.2 데몬 루프
 
@@ -156,7 +156,7 @@ echo $? > <CTF>/.ctfm/launch/<slug>.exit      # 데몬이 claude 종료를 감�
 - claude가 끝나도 셸이 남아 `claude --continue`로 이어갈 수 있음.
 - `AskUserQuestion`, `EnterPlanMode` 도구는 끈다. 질문 대화상자나 plan 승인 대기는 Stop hook에 걸리지 않고 알림 없이 멈추는 통로다(E2E에서 실제로 발생). 질문은 `ctfm report ask`로만 한다.
 - 관리 세션에서 물려받는 `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` 등은 launch 스크립트와 tmux 호출에서 지운다(안 지우면 풀이 세션이 자식 세션처럼 동작).
-- **사용자가 직접 보기**: 세션은 사용자의 기본 tmux 서버에 뜬다. `tmux attach -t <ctf>-pwn`으로 붙으면 대화형 claude 화면이 그대로 보이고 직접 입력할 수 있다. 윈도우 이름 앞에 상태가 붙는다: `✔` 플래그 획득, `!` 막힘 알림 보냄(계속 풀이 중), `?` 사용자 답 대기.
+- **사용자가 직접 보기**: 세션은 사용자의 기본 tmux 서버에 뜬다. `tmux attach -t pwn_<ctf>`으로 붙으면 대화형 claude 화면이 그대로 보이고 직접 입력할 수 있다. 윈도우 이름 앞에 상태가 붙는다: `✔` 플래그 획득, `!` 막힘 알림 보냄(계속 풀이 중), `?` 사용자 답 대기.
 
 ### 5.4 문제 상태
 
@@ -284,7 +284,7 @@ download(cfg, file, dest)
 
 ## 11. 구현 중 바뀐 점
 
-- **`ctfm up` 추가**: 데몬을 tmux `<ctf>-ctl:daemon`에 띄우는 명령. 관리 세션의 환경 변수가 tmux 서버로 새지 않게 `ctfm`이 직접 띄운다.
+- **`ctfm up` 추가**: 데몬을 tmux `ctl_<ctf>:daemon`에 띄우는 명령. 관리 세션의 환경 변수가 tmux 서버로 새지 않게 `ctfm`이 직접 띄운다.
 - **질문 도구 차단**: 5.3절 참고. Stop hook만으로는 질문 대화상자에서 조용히 멈추는 것을 막지 못했다.
 - **원격 접속 불가도 `ask` 사유로 추가**: 원격이 죽어 있고 로컬에서 할 일이 없으면 재검토를 반복해도 진전이 없으므로 바로 사용자에게 알린다. 답을 받은 뒤에는 다시 포기 차단이 걸린다.
 - **윈도우 이름 상태 표시**(`✔`, `!`, `?`)와 `ctfm status`의 접속 명령: 사용자가 tmux에서 진행 상황을 바로 보기 위함.
@@ -301,7 +301,7 @@ download(cfg, file, dest)
   - **유휴 재개**: Stop hook 대신 데몬이 15초마다 화면을 확인한다. 하단에 작업 중 표시(`esc to interrupt`)가 없고 화면이 `idle_nudge`초(기본 120) 동안 그대로면 `ctfm send`와 같은 방식으로 계속 진행 메시지를 넣고 `NUDGED` 이벤트를 남긴다. claude에도 적용되고, `waiting_user`와 사용자가 보고 있는 윈도우는 건너뛴다. `ctfm set idle-nudge 0`이면 끈다.
   - codex의 셸 명령은 공유 app-server 환경에서 실행돼 실행 스크립트의 `PATH`가 전달되지 않는다. AGENTS.md는 `ctfm` 전체 경로를 쓰게 한다.
   - `[?]` 공유 app-server 모드에서는 명령을 공식 codex 0.172 app-server가 실행하므로, insane 패치가 실제 풀이에 적용되는지 불확실하다.
-- **King of the Hill** (2026-11-25): 사이트 카테고리나 문제 이름이 `koth`/`king of the hill`이면 `koth` 유형(7번째 분야, `koth/`, tmux `<ctf>-koth`). 대기 순서 최우선(슬롯 공유).
+- **King of the Hill** (2026-11-25): 사이트 카테고리나 문제 이름이 `koth`/`king of the hill`이면 `koth` 유형(7번째 분야, `koth/`, tmux `koth_<ctf>`). 대기 순서 최우선(슬롯 공유).
   - 모델 체인 `koth.chain`(config): `codex gpt-6.2-astra`(fast_rounds 3) → `claude claude-mythos-5-2` → `claude claude-opus-5-5`. 데몬이 15초마다 화면을 보고, 작업 중이 아닐 때 마지막 8줄에 사용량 한도나 안전 차단 문구가 있으면 다음 항목으로 다시 띄운다(같은 에이전트면 resume). `[?]` 실제 한도/차단 화면 문구는 일부만 확인했고 정규식은 추정이다.
   - fast: codex TUI의 `/fast`는 토글이고 작업 중에도 즉시 적용된다(`Service tier set to priority/default`, 하단 표시에 `fast`). 데몬이 하단 표시를 읽어 원하는 상태(보고된 라운드 ≤ fast_rounds)와 다르면 키 입력으로 `/fast`를 넣는다. `-c service_tier=...`는 내장 모드를 강제해서 쓸 수 없다.
   - 사이트 접근 위임: 사용자 결정으로 KotH 에이전트는 사이트에 직접 접근해 라운드를 확인한다(이후 제출까지 자동화 예정). 문제 디렉토리에 `CTF_ACCESS.env`(CTF .env에서 Discord webhook을 뺀 값 + CTF_URL, CHALLENGE_ID, 권한 600). 제출 절차는 `templates/KOTH_STRATEGY.md`가 비어 있는 동안 ask로 묻는다.

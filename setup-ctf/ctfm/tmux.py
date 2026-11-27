@@ -26,7 +26,7 @@ def tmux(*args, stdin=None, check=True):
 
 def session_name(root, category):
     ctf = re.sub(r"[.:\s]", "_", root.name)  # tmux 세션 이름에 쓸 수 없는 문자 제거
-    return f"{ctf}-{category}"
+    return f"{category}_{ctf}"  # 예: pwn_whitehat2026. 분야가 앞에 와야 세션 목록에서 분야별로 모인다
 
 
 def _keep_shell(command):

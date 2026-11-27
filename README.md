@@ -38,12 +38,12 @@
  사용자 ── /setup-ctf ──▶  관리 세션 (Claude Code, cwd = <CTF>/)
                            │  셋업 · 이벤트 대응 · 사용자 지시 처리 · CTF 특징 기록
                            ▼
-              ctfm 데몬  (tmux <ctf>-ctl, LLM 없음)
+              ctfm 데몬  (tmux ctl_<ctf>, LLM 없음)
                  30초마다  목록 조회 → 새 문제 다운로드/압축 해제 → 대기열
                   5초마다  빈 슬롯에 spawn · 종료/유휴 감지
                            │
      ┌──────────┬──────────┼──────────┬──────────┬──────────┐
-  <ctf>-pwn  <ctf>-web  <ctf>-rev  <ctf>-crypto <ctf>-ai  <ctf>-misc     ← tmux 세션
+  pwn_<ctf>  web_<ctf>  rev_<ctf>  crypto_<ctf> ai_<ctf>  misc_<ctf>     ← tmux 세션
      │  윈도우 1개 = 문제 1개 = 풀이 에이전트 (claude /solve-challenge · codex $solve-challenge)
      ▼
   ctfm report solved | retry | blocked | ask  ──▶  state.json · events.log · Discord
@@ -188,7 +188,7 @@ CTFd가 아닌 사이트라면 관리 세션이 사이트를 분석해 즉석에
 ### 풀이 지켜보기
 
 ```bash
-tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
+tmux attach -t pwn_MyCTF2026       # web_ rev_ crypto_ ai_ misc_ koth_ (세션 이름: <분야>_<CTF 이름>)
 ```
 
 - 플래그를 얻은 문제는 `WRITEUP.md`에 풀이를 남긴 뒤 세션이 `/exit`로 끝나고 윈도우가 지워집니다.

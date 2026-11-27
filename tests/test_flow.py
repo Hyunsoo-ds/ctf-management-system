@@ -106,7 +106,7 @@ class Flow(unittest.TestCase):
         # 우선순위 지정(wanted) → solve 수 많은 순(easy one). 이미 풀린 문제는 건너뜀.
         self.assertEqual(self.status(), {"hard one": "queued", "easy one": "running", "mid web": "queued",
                                          "wanted": "running", "done": "site_solved"})
-        self.assertEqual(self.windows(), ["TESTCTF-crypto:wanted", "TESTCTF-pwn:easy_one"])
+        self.assertEqual(self.windows(), ["crypto_TESTCTF:wanted", "pwn_TESTCTF:easy_one"])
         self.assertEqual(self.pane_count("easy one"), 2)  # pwn은 codex와 claude를 좌우 pane에 동시에 (슬롯은 하나)
         self.assertEqual(self.pane_count("wanted"), 1)
         _, out = self.run_cli("status")
@@ -198,11 +198,11 @@ class Flow(unittest.TestCase):
         self.run_cli("report", "ask", "--question", "팀 토큰이 필요함", cwd=easy)
         self.assertEqual(self.status()["easy one"], "waiting_user")
         self.assertIn("팀 토큰이 필요함", self.mock.webhook[-1])
-        self.assertIn("TESTCTF-pwn:?easy_one", self.windows())  # 윈도우 이름에 상태 표시
+        self.assertIn("pwn_TESTCTF:?easy_one", self.windows())  # 윈도우 이름에 상태 표시
         self.assertEqual(self.status()["easy one"], "waiting_user")
         _, out = self.run_cli("hook", "prompt", stdin=hook_in)  # 사용자가 윈도우에 직접 답을 입력했다
         self.assertEqual((out, self.status()["easy one"]), ("", "running"))
-        self.assertIn("TESTCTF-pwn:easy_one", self.windows())
+        self.assertIn("pwn_TESTCTF:easy_one", self.windows())
 
         # solved: 알림, 슬롯 반환 → 대기 1순위(late ai, solves 80) spawn. 동시 풀이의 상대에게는 종료 메시지
         self.run_cli("report", "solved", "--flag", "flag{real}", cwd=easy)
@@ -210,12 +210,12 @@ class Flow(unittest.TestCase):
         self.assertIn("claude 세션이 이 문제의 플래그를 얻었다", tmux.capture(ch["peer"]["pane"]).replace("\n", ""))
         self.poll()
         self.assertEqual(self.status()["late ai"], "running")
-        self.assertIn("TESTCTF-ai:late_ai", self.windows())
-        self.assertIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀이 정리를 쓸 시간을 준 뒤에 닫는다
+        self.assertIn("ai_TESTCTF:late_ai", self.windows())
+        self.assertIn("pwn_TESTCTF:✔easy_one", self.windows())  # 풀이 정리를 쓸 시간을 준 뒤에 닫는다
         with self.store.locked() as (cfg, st):
             st["challenges"][ch["id"]]["solved_at"] = time.time() - 60
         self.poll()
-        self.assertNotIn("TESTCTF-pwn:✔easy_one", self.windows())  # 풀린 문제는 세션을 끝내고 윈도우를 지운다
+        self.assertNotIn("pwn_TESTCTF:✔easy_one", self.windows())  # 풀린 문제는 세션을 끝내고 윈도우를 지운다
         self.assertIn("CLOSED pwn/easy_one", self.store.events_path.read_text())
 
         # 사이트에서 풀림 표시: 실행 중이면 알림만, 대기 중이면 큐에서 제외
@@ -229,7 +229,7 @@ class Flow(unittest.TestCase):
         self.run_cli("kill", "wanted")
         self.poll()
         self.assertEqual((self.status()["wanted"], self.status()["mid web"]), ("killed", "running"))
-        self.assertNotIn("TESTCTF-crypto:wanted", self.windows())
+        self.assertNotIn("crypto_TESTCTF:wanted", self.windows())
 
         # 한도를 넘는 즉시 시작, 메시지 주입
         self.run_cli("spawn", "wanted", "--now", "--resume")
@@ -345,14 +345,14 @@ class Flow(unittest.TestCase):
         self.assertFalse(any(f.exists() for f in exit_files))
         self.run_cli("kill", "easy one")
         self.assertEqual([f.read_text().strip() for f in exit_files], ["0", "0"])  # 두 pane 모두 스스로 끝났다
-        self.assertNotIn("TESTCTF-pwn:easy_one", self.windows())
+        self.assertNotIn("pwn_TESTCTF:easy_one", self.windows())
         self.assertNotIn("강제 종료", self.store.events_path.read_text())
 
         with self.store.locked() as (cfg, st):  # /exit에 반응하지 않으면 기다린 뒤 강제로 지우고 그 사실을 남긴다
             cfg.update(exit_wait=1, agent_cmd="sh -c 'sleep 600' agent")
         self.run_cli("spawn", "easy one", "--now")
         self.run_cli("kill", "easy one")
-        self.assertNotIn("TESTCTF-pwn:easy_one", self.windows())
+        self.assertNotIn("pwn_TESTCTF:easy_one", self.windows())
         self.assertIn("강제 종료", self.store.events_path.read_text())
 
     def test_effort_escalation(self):

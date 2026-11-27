@@ -120,7 +120,7 @@ def cmd_daemon(a):
 
 
 def cmd_up(a):
-    """데몬을 tmux `<ctf>-ctl` 세션에 띄운다. 이미 떠 있으면 아무것도 하지 않는다."""
+    """데몬을 tmux `ctl_<ctf>` 세션에 띄운다. 이미 떠 있으면 아무것도 하지 않는다."""
     store = store_here()
     session = tmux.session_name(store.root, "ctl")
 
@@ -454,7 +454,7 @@ def main(argv=None):
 
     sub.add_parser("check", help="로그인과 문제 목록 조회 확인").set_defaults(fn=cmd_check)
     sub.add_parser("daemon", help="폴링/스케줄링 데몬을 이 터미널에서 실행").set_defaults(fn=cmd_daemon)
-    sub.add_parser("up", help="데몬을 tmux <ctf>-ctl 세션에 띄움").set_defaults(fn=cmd_up)
+    sub.add_parser("up", help="데몬을 tmux ctl_<ctf> 세션에 띄움").set_defaults(fn=cmd_up)
     sub.add_parser("status", help="문제별 현황").set_defaults(fn=cmd_status)
 
     s = sub.add_parser("spawn", help="문제를 큐에 다시 넣거나 즉시 시작")
