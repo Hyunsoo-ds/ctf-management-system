@@ -68,7 +68,7 @@ disable-model-invocation: true
 |---|---|---|
 | `NEW`, `SPAWNED`, `SKIPPED` | 문제 수집, 에이전트 시작, 이미 풀린 문제 제외 | 여러 건이면 묶어서 전달 |
 | `SOLVED` | 에이전트가 플래그 획득 (Discord 전송됨). 곧 데몬이 그 세션을 `/exit`로 끝내고 윈도우를 지운다(`CLOSED`). 풀이 요약은 문제 디렉토리의 `WRITEUP.md`에 남는다 | 플래그와 함께 전달. 자동 제출이 허용돼 있으면(4절) 바로 `ctfm submit X`, 아니면 사용자가 제출한다 |
-| `ESCALATED` | claude 에이전트가 2번째로 막혀 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 시작함 | 한 줄 전달 |
+| `ESCALATED` | 에이전트(claude, codex 모두)가 2번째로 막혀 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 시작함 | 한 줄 전달 |
 | `BLOCKED` | 3번째 막힘(재검토 2회 후에도 진전 없음), insight 요청 (Discord 전송됨). 에이전트는 계속 진행 중 | 전달. 사용자가 힌트를 주면 `ctfm send`로 전달 |
 | `ASK` | 에이전트가 사용자 답을 기다림: 토큰/시도 제한, 원격 다운, 또는 Linux CLI로 풀기 어려운 문제(VM 이미지 침해 사고 분석 등) | 바로 전달. 답은 `ctfm send`로 전달하거나 사용자가 그 윈도우에 직접 입력 |
 | `SITE_SOLVED` | 실행 중인 문제가 사이트에서 풀림으로 표시됨 | 알리기만 한다. 사용자가 끝내라고 하면 `ctfm kill` |
@@ -137,10 +137,10 @@ disable-model-invocation: true
 - 한쪽이 `SOLVED`를 보고하면 다른 쪽 pane에 종료 메시지가 들어간다. 한쪽 프로세스만 죽으면 `EXITED ...[codex]`가 뜨지만 문제는 계속 `running`이고, 둘 다 끝나야 슬롯이 반환된다.
 - 재검토 횟수는 pane별로 센다.
 
-**effort 상향 (KotH를 뺀 모든 문제의 claude)**: `xhigh`로 시작한다. 막힘 보고(`ctfm report retry`)가 기준이다.
+**effort 상향 (KotH를 뺀 모든 문제, claude와 codex 모두)**: claude는 `xhigh`, codex는 `medium`으로 시작한다. 막힘 보고(`ctfm report retry`)가 기준이고, 동시 풀이에서는 pane마다 따로 센다.
 
 1. 1번째 막힘: 재검토 체크리스트.
-2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 멈추면(목표가 남아 있어 도구 없는 짧은 턴이 몇 번 이어진 뒤 일시 정지된다, 20초 안팎) 데몬이 `/effort max` → `/compact`를 입력하고, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). 이후 그 문제는 resume해도 max로 뜬다.
+2. 2번째 막힘: 에이전트가 STATE.md를 갱신하고 멈추면(목표가 남아 있어 도구 없는 짧은 턴이 몇 번 이어진 뒤 일시 정지된다, 20초 안팎) 데몬이 effort를 max로 올리고(claude는 `/effort max`, codex는 `/model` 메뉴) `/compact`를 입력한 뒤, compact가 끝나면 처음부터 엄밀하게 다시 보라는 지시를 넣는다(`ESCALATED`). codex가 멈추면서 목표를 세워 뒀으면 지시 앞에 `/goal resume`을 넣는다. 이후 그 pane은 resume해도 max로 뜨고, `ctfm set codex-effort`를 바꿔도 max로 남는다.
 3. 3번째 막힘: `BLOCKED.md` 작성 → Discord 알림(`BLOCKED`) → 계속 풀이. 횟수가 초기화되고, 이미 max인 다음 사이클에서는 재검토 2회 → 알림만 반복한다.
 
 codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).

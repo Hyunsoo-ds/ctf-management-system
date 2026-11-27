@@ -16,7 +16,7 @@ from .notify import discord
 from .state import (ACTIVE, CATEGORIES, CTFM_BIN, KOTH_DEFAULTS, Store, find_root, label, pane_label, panes, queue_key,
                     resolve, screen_order, write_env)
 
-RETRY_LIMIT = 2  # 2회째에 claude는 effort를 max로 올려 다시 보고, 3번째 막힘은 사용자 알림(blocked)이다
+RETRY_LIMIT = 2  # 2회째에는 effort를 max로 올려 다시 보고, 3번째 막힘은 사용자 알림(blocked)이다
 RETRY_CHECKLIST = """재검토 {n}/{limit} 기록됨. 지금 다음을 순서대로 수행하라.
 1. CHALLENGE.md와 배포 파일을 처음부터 다시 읽는다 (기억에 의존하지 않는다).
 2. STATE.md의 풀이 논리를 단계별로 다시 따라가며 [추정] 전제를 실제로 확인해 틀린 곳을 찾는다.
@@ -376,9 +376,8 @@ def cmd_report(a):
             else:
                 p["retries"] += 1
                 store.emit("RETRY", f"{who} 재검토 {p['retries']}/{RETRY_LIMIT}", echo=False)
-                # 마지막 재검토: claude는 effort를 max로 올려 다시 본다(턴이 끝나면 데몬이 실행). KotH와 codex는 대상이 아니다
-                up = (p["retries"] == RETRY_LIMIT and p["agent"] == "claude" and ch["category"] != "koth"
-                      and daemon.settings(cfg, ch, p)[1] != "max")
+                # 마지막 재검토: effort를 max로 올려 다시 본다(턴이 끝나면 데몬이 실행, claude와 codex 모두). KotH는 대상이 아니다
+                up = p["retries"] == RETRY_LIMIT and ch["category"] != "koth" and daemon.settings(cfg, ch, p)[1] != "max"
                 if up:
                     p["escalate"] = "pending"
                 print((ESCALATE_NOTICE if up else RETRY_CHECKLIST).format(n=p["retries"], limit=RETRY_LIMIT))

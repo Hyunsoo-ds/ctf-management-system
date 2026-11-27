@@ -54,6 +54,8 @@ CODEX_FOOTER = re.compile(r"GPT-[\w.\-]+ (\w+)( fast)? ·")  # 예: "GPT-6.2-Ast
 # codex /model 메뉴의 effort 항목 이름. max는 "More reasoning…" 아래의 하위 메뉴(Advanced Reasoning)에 있다
 EFFORT_MENU = {"low": "Low", "medium": "Medium", "high": "High", "xhigh": "Extra high", "max": "Max"}
 ADVANCED = ("max",)
+# codex가 스스로 멈춘 목표의 하단 표시("Goal paused (/goal resume)", "Goal stalled (/goal resume)"). 메시지만으로는 다시 이어지지 않는다
+GOAL_STOPPED = re.compile(r"Goal \w+ \(/goal resume\)")
 EXIT_DIALOG = re.compile(r"Background work is running|Exit and stop tasks")  # claude: 백그라운드 작업이 있을 때의 종료 확인 창
 CHECK_EVERY = 15
 NUDGE_MESSAGE = (
@@ -88,7 +90,8 @@ def settings(cfg, ch, p):
     KotH는 설정의 기본 effort를 쓰지 않고(체인 항목에 있을 때만) fast는 라운드 기준으로 따로 정한다(sync_codex)."""
     koth = ch["category"] == "koth"
     if p["agent"] == "codex":
-        return p.get("model") or cfg.get("codex_model"), None if koth else cfg.get("codex_effort"), not koth and bool(cfg.get("codex_fast"))
+        effort = p.get("effort") or (None if koth else cfg.get("codex_effort"))
+        return p.get("model") or cfg.get("codex_model"), effort, not koth and bool(cfg.get("codex_fast"))
     return p.get("model") or cfg["model"], p.get("effort") or (None if koth else cfg.get("effort")), False
 
 
@@ -305,7 +308,7 @@ def set_codex_effort(pane, effort):
 
 def sync_codex(store, cfg, ch, p, screen, now):
     """codex의 fast와 effort를 하단 표시로 읽어 설정과 다르면 맞춘다. 실행 옵션으로는 줄 수 없어서다(agent_command 참고).
-    KotH는 체인 항목의 fast_rounds 라운드까지만 fast를 켜고 effort는 건드리지 않는다."""
+    KotH는 체인 항목의 fast_rounds 라운드까지만 fast를 켜고 effort는 체인 항목에 있을 때만 맞춘다."""
     if p["agent"] != "codex" or now - p.get("fast_sent", 0) < 10:
         return
     match = CODEX_FOOTER.search(screen)
@@ -334,20 +337,27 @@ def sync_codex(store, cfg, ch, p, screen, now):
                 store.emit("EFFORT_ERROR", f"{pane_label(ch, p)} codex effort를 {effort}로 바꾸지 못함 (/model 메뉴를 읽지 못함). 현재 {match.group(1)}")
 
 
-def escalate(store, ch, p, busy):
-    """재검토 2회째의 claude: 턴이 끝나면 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 지시한다.
-    pending → (유휴) ready → (계속 유휴면 /effort max, /compact 입력) compacting → (compact 끝) 지시 전송."""
+def escalate(store, ch, p, busy, screen):
+    """재검토 2회째(claude와 codex 모두): 턴이 끝나면 effort를 max로 올리고 compact한 뒤 엄밀한 재검토를 지시한다.
+    pending → (유휴) ready → (계속 유휴면 effort max, /compact 입력) compacting → (compact 끝) 지시 전송."""
+    codex = p["agent"] == "codex"
     if busy:
         if p["escalate"] == "ready":  # 도구 호출 사이의 순간이었다
             p["escalate"] = "pending"
     elif p["escalate"] == "pending":
         p["escalate"] = "ready"
     elif p["escalate"] == "ready":
-        tmux.type_command(p["pane"], "/effort max")
+        if codex:
+            set_codex_effort(p["pane"], "max")  # 실패해도 기록된 effort를 보고 sync_codex가 다시 맞춘다
+        else:
+            tmux.type_command(p["pane"], "/effort max")
         time.sleep(1)
         tmux.type_command(p["pane"], "/compact")
         p.update(escalate="compacting", effort="max")
     else:
+        if codex and GOAL_STOPPED.search(screen):  # 멈추면서 목표를 세워 둔 codex는 지시만 넣으면 한 턴만 하고 다시 멈춘다
+            tmux.type_command(p["pane"], "/goal resume")
+            time.sleep(1)
         tmux.send_text(p["pane"], RIGOROUS_PROMPT)
         del p["escalate"]
         store.emit("ESCALATED", f"{pane_label(ch, p)} 재검토 2회째: effort max로 올리고 compact한 뒤 엄밀한 재검토를 지시함")
@@ -376,7 +386,7 @@ def watch(store, cfg, ch, p, now):
             store.emit("SUCCESSOR", f"{label(ch)} 라운드 {ch['round']}: 후임 {describe(cfg, ch, ch['peer'])}를 오른쪽 pane에 띄워 인수 준비 시작")
     sync_codex(store, cfg, ch, p, screen, now)
     if p.get("escalate"):
-        escalate(store, ch, p, busy)
+        escalate(store, ch, p, busy, screen)
         return
     if p.get("role") == "successor" and p.get("ready"):  # 준비를 마치고 전환을 기다리며 멈춰 있는 것이 정상이다
         return

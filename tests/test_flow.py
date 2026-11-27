@@ -150,10 +150,11 @@ class Flow(unittest.TestCase):
         self.assertEqual(out, "")
 
         # 재검토 2회 → 3번째 막힘은 blocked 안내, BLOCKED 파일 없이는 blocked 불가.
-        # 동시 풀이에서 CTFM_AGENT가 없는 호출은 codex의 것이다(effort 상향 없음, 횟수는 pane별)
-        for n in (1, 2):
-            _, out = self.run_cli("report", "retry", cwd=easy)
-            self.assertIn(f"재검토 {n}/2 기록됨. 지금 다음을", out)
+        # 동시 풀이에서 CTFM_AGENT가 없는 호출은 codex의 것이다(횟수는 pane별, 2회째는 codex도 effort 상향)
+        _, out = self.run_cli("report", "retry", cwd=easy)
+        self.assertIn("재검토 1/2 기록됨. 지금 다음을", out)
+        _, out = self.run_cli("report", "retry", cwd=easy)
+        self.assertIn("재검토 2/2 기록됨. 이번에는 effort를 max로", out)
         _, out = self.run_cli("report", "retry", cwd=easy)
         self.assertIn("ctfm report blocked", out)
         with self.assertRaises(SystemExit):
@@ -407,6 +408,34 @@ class Flow(unittest.TestCase):
         self.run_cli("report", "retry", cwd=wanted)
         _, out = self.run_cli("report", "retry", cwd=wanted)
         self.assertIn("재검토 2/2 기록됨. 지금 다음을", out)
+
+    def test_effort_escalation_codex(self):
+        """codex도 같다: /model 메뉴로 effort max → /compact → (세워 둔 목표가 있으면 /goal resume) → 엄밀한 재검토 지시."""
+        stopped = "sh -c 'echo \"Goal paused (/goal resume)\"; exec sleep 600' agent"
+        with self.store.locked() as (cfg, st):
+            cfg.update(idle_nudge=0, max_agents=1, priority=["easy one"], agent_cmd=stopped)
+        self.poll()
+        easy = self.chal_dir("easy one")
+        self.run_cli("report", "retry", cwd=easy)  # CTFM_AGENT가 없는 호출은 codex의 것이다
+        _, out = self.run_cli("report", "retry", cwd=easy)
+        self.assertIn("여기서 멈추고 기다린다", out)
+
+        ch = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            daemon.housekeep(self.store)
+            ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+            if "escalate" not in ch["peer"]:
+                break
+            time.sleep(0.5)
+        self.assertEqual((ch["peer"].get("escalate"), ch["peer"]["effort"], ch.get("effort")), (None, "max", None))
+        screen = tmux.capture(ch["peer"]["pane"], 60).replace("\n", "")
+        # 가짜 에이전트가 찍은 하단 표시에도 "/goal resume"이 있어 마지막 위치(입력된 것)를 본다
+        steps = [screen.rindex(s) for s in ("/model", "/compact", "/goal resume", "처음부터 엄밀하게 다시 본다")]
+        self.assertEqual(steps, sorted(steps))
+        self.assertNotIn("/compact", tmux.capture(ch["pane"], 60))  # claude pane은 그대로다
+        self.assertIn("ESCALATED pwn/easy_one[codex]", self.store.events_path.read_text())
+        self.assertIn("codex gpt-6-sol max", self.run_cli("status")[1])
 
     def test_dual_exit(self):
         """동시 풀이는 한쪽이 끝나도 슬롯을 유지하고, 둘 다 끝나야 exited가 된다."""
