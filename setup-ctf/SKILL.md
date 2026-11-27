@@ -74,7 +74,7 @@ disable-model-invocation: true
 | `SITE_SOLVED` | 실행 중인 문제가 사이트에서 풀림으로 표시됨 | 알리기만 한다. 사용자가 끝내라고 하면 `ctfm kill` |
 | `EXITED` | 에이전트 프로세스나 윈도우가 사라짐 (슬롯 반환됨) | `ctfm peek`으로 원인 확인 후 `ctfm spawn <문제> --now --resume` 여부를 사용자에게 제안 |
 | `NUDGED` (구독에서 걸러짐) | 플래그 없이 입력 대기로 멈춘 에이전트에 데몬이 계속 진행 메시지를 넣음 | 할 일 없음. `ctfm status`의 "유휴 재개" 횟수가 빠르게 늘면 `ctfm peek`으로 왜 멈추는지 보고 사용자에게 알린다 |
-| `SUCCESSOR` | KotH 라운드 4: 후임(Mythos 5.2 high)을 오른쪽 pane에 띄워 인수 준비 시작 | 한 줄 전달 |
+| `SUCCESSOR` | KotH 라운드 3: 후임(Mythos 5.2 high)을 오른쪽 pane에 띄워 인수 준비 시작 | 한 줄 전달 |
 | `READY` | KotH 후임이 인수 준비를 마침 (Discord 전송됨) | 5절의 메인 전환 절차 2~4번을 수행한다 |
 | `HANDOVER` | KotH 메인 전환 완료, 이전 메인 세션 종료 | 한 줄 전달 |
 | `MODEL_FALLBACK` | KotH 에이전트의 모델이 사용량 한도나 안전 차단으로 막혀 다음 모델로 다시 띄움 | 전달 (어느 모델에서 어느 모델로, 이유) |
@@ -132,16 +132,16 @@ codex는 effort를 올리지 않는다(재검토 2회 → 3번째에 알림).
 사이트 카테고리나 문제 이름에 `KotH`/`King of the Hill`이 들어가면 `koth` 유형으로 분류된다(`koth/<문제>/`, tmux `<ctf>-koth`). 사이트 카테고리 이름이 다르면 `ctfm set category-map '<사이트 카테고리>=koth'`로 지정한다. jeopardy와 다른 점:
 
 - **대기 순서 맨 앞**: 초반 라운드 점수 확보가 핵심이라 `--priority` 문제보다도 먼저 슬롯을 받는다(슬롯은 공유).
-- **메인 전환 (네가 실행한다)**: Astra(fast)가 라운드 4까지 메인을 맡고, 그 뒤 Mythos 5.2로 넘긴다. codex 사용량이 적어 오래 못 쓰기 때문이다.
-  1. 에이전트가 라운드 4를 보고하면 데몬이 같은 윈도우의 오른쪽 pane에 `claude-mythos-5-2`(effort high)를 후임으로 띄운다(`SUCCESSOR`). 후임은 제출하지 않고 Astra의 작업을 확인해 `HANDOVER.md`에 정리한다. 후임이 막히면 Opus 5.5로 다시 뜬다.
-  2. 후임이 준비를 마치면 `READY` 이벤트가 온다(Discord 전송됨). 이때부터 전환 시점을 네가 정한다. **Astra가 라운드 4 제출을 마친 뒤, 제출 사이의 틈에** 전환한다. `ctfm status`의 라운드와 `ctfm peek X --agent codex`로 확인한다. 라운드 4 마감까지 `READY`가 오지 않으면 Astra가 계속 맡고, `READY`가 온 뒤 Astra가 그 라운드 제출을 마친 시점에 전환한다.
+- **메인 전환 (네가 실행한다)**: Astra(fast)가 초반을 맡고 **라운드 4부터 Mythos 5.2가 맡는 것이 목표**다. codex 사용량이 적어 오래 못 쓰기 때문이다.
+  1. 에이전트가 라운드 3을 보고하면 데몬이 같은 윈도우의 오른쪽 pane에 `claude-mythos-5-2`(effort high)를 후임으로 띄운다(`SUCCESSOR`). 후임은 라운드 3 동안 제출하지 않고 Astra의 작업을 파악해 다음 전략을 `HANDOVER.md`에 준비한다. 후임이 막히면 Opus 5.5로 다시 뜬다.
+  2. 후임이 준비를 마치면 `READY` 이벤트가 온다(Discord 전송됨). 이때부터 전환 시점을 네가 정한다. 목표는 **Astra가 라운드 3 제출을 마친 뒤 라운드 4가 시작되는 시점**이고, 그러면 라운드 4 제출부터 Mythos가 한다. `ctfm status`의 라운드와 `ctfm peek X --agent codex`로 확인하고, 제출 도중에는 전환하지 않는다. 그때까지 `READY`가 오지 않으면 Astra가 라운드 4도 맡고, `READY`가 온 뒤 Astra가 그 라운드 제출을 마친 시점에 전환한다.
   3. 전환 직전에 `ctfm send --agent codex X "곧 다른 세션에 넘긴다. 지금 STATE.md를 최신으로 갱신하고 끝나면 '갱신 완료'라고만 답하라."`를 보내고 `ctfm peek X --agent codex`로 끝난 것을 확인한다.
   4. `ctfm handover X`: 후임이 메인이 되고 Astra 세션은 종료된다(`HANDOVER`, Discord 전송됨). 사용자에게 한 줄로 알린다.
   - 전환 전에 Astra가 사용량 한도로 막히면 데몬이 준비 중이던 후임에게 바로 넘긴다(`MODEL_FALLBACK`).
 - **모델 체인**: 기본 `codex gpt-6.2-astra` → `claude claude-mythos-5-2`(high) → `claude claude-opus-5-5`. 화면에 사용량 한도나 안전 차단 문구가 보이면 데몬이 다음 모델로 다시 띄운다(`MODEL_FALLBACK`). claude끼리 넘어갈 때는 대화를 이어 가고, codex에서 claude로 넘어갈 때는 새로 시작한다(STATE.md는 남는다). 체인은 `.ctfm/config.json`의 `koth.chain`이다.
 - **라운드 요약**: 에이전트는 라운드가 바뀔 때마다 `ctfm report round --round N --summary '...'`로 보고하고, 요약(직전 결과, 제출한 후보, 이번 계획, 상대 동향)이 그 문제의 Discord 포스트로 간다. `ROUND` 이벤트는 구독에서 걸러지므로 네가 따로 전달할 필요는 없다.
 - **경쟁형 문제**: 다른 팀의 제출물에 따라 점수가 달라지는 문제면, 메인이 claude로 전환된 시점부터(초반 Astra 세션은 하지 않는다) 메인 에이전트가 기존 전략을 진행하면서 상대 전략을 분석하는 subagent를 하나 병렬로 돌려 `OPPONENTS.md`에 정리하고 대응 방안을 후보에 반영한다(`templates/KOTH_STRATEGY.md` 7.5).
-- **fast**: Astra는 라운드 4까지 `/fast`를 켜고, 그 뒤에도 메인이면 끈다. 라운드는 에이전트가 사이트에서 확인해 `ctfm report round`로 보고하고, 데몬이 codex 하단 표시를 보고 `/fast`를 입력해 맞춘다. 라운드 보고가 아직 없으면 켠 상태로 둔다.
+- **fast**: Astra는 메인인 동안 라운드 4까지 `/fast`를 켜고(전환이 늦어진 경우 포함), 그 뒤에도 메인이면 끈다. 라운드는 에이전트가 사이트에서 확인해 `ctfm report round`로 보고하고, 데몬이 codex 하단 표시를 보고 `/fast`를 입력해 맞춘다. 라운드 보고가 아직 없으면 켠 상태로 둔다.
 - **사이트 접근 위임**: KotH 문제 디렉토리에는 `CTF_ACCESS.env`(사이트 주소, 인증 정보, 문제 ID, 권한 600. Discord webhook은 넣지 않음)가 생기고, 에이전트는 이 문제의 라운드, 점수판, 공지를 직접 조회할 수 있다. 제출은 `templates/KOTH_STRATEGY.md`(AGENTS.md 7번)를 따른다: 매 라운드 반드시 제출하고, 라운드 1~3은 간단하지만 확실한 규칙 기반 후보로 점수부터 확보한다. 제출 방법이 불확실하거나 제출 제한·감점이 있으면 에이전트가 `ASK`로 묻는다.
 - **규칙**: `AGENTS.md`는 KotH용 템플릿(`templates/AGENTS_KOTH.md`)으로 만든다. Stop hook과 유휴 재개 메시지도 "대회 끝까지 개선을 계속하라"는 KotH용 문구를 쓴다.
 - 사용자가 "이 KotH는 Mythos로 바꿔"라고 하면 `ctfm kill X` 후 `ctfm spawn X --now --agent claude --model claude-mythos-5-2`. 직접 고른 모델에는 자동 전환과 fast 조정을 하지 않는다.

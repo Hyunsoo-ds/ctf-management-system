@@ -312,8 +312,8 @@ def watch(store, cfg, ch, p, now):
             koth_fallback(store, cfg, ch, p, hit.group(0))
             return
         chain, idx = koth_chain(cfg), ch.get("chain_idx", -1)
-        handover = chain[idx].get("fast_rounds") if 0 <= idx < len(chain) - 1 else None
-        if p is ch and not ch.get("peer") and handover and (ch.get("round") or 0) >= handover:
+        since = chain[idx].get("successor_round") if 0 <= idx < len(chain) - 1 else None
+        if p is ch and not ch.get("peer") and since and (ch.get("round") or 0) >= since:
             spawn_successor(store, cfg, ch, idx + 1)
             store.emit("SUCCESSOR", f"{label(ch)} 라운드 {ch['round']}: 후임 {describe(cfg, ch, ch['peer'])}를 오른쪽 pane에 띄워 인수 준비 시작")
     sync_codex(store, cfg, ch, p, screen, now)

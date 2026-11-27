@@ -22,7 +22,7 @@
 | 🏁 **동시 풀이** | pwn · rev 문제는 한 윈도우의 좌우 pane에 Codex(`gpt-6-sol` medium fast)와 Claude(`claude-opus-5` xhigh)를 함께 띄워 먼저 푸는 쪽을 씁니다 |
 | 🧭 **관리 세션** | 스킬을 호출한 세션이 관리자가 되어 "X 끝내", "Y 먼저", "Z한테 이거 전해" 같은 지시를 처리합니다 |
 | 🤖 **에이전트 선택** | 풀이 에이전트로 Claude Code 또는 Codex(`insane-codex`)를 문제별로 고를 수 있습니다 |
-| 👑 **King of the Hill** | KotH 문제를 자동 분류해 고급 모델로 최우선 배정합니다. 초반 4라운드는 Astra 6.2 fast, 이후 Mythos 5.2(막히면 Opus 5.5)가 넘겨받습니다 |
+| 👑 **King of the Hill** | KotH 문제를 자동 분류해 고급 모델로 최우선 배정합니다. 초반 라운드는 Astra 6.2 fast, 라운드 4부터 Mythos 5.2(막히면 Opus 5.5)가 넘겨받습니다 |
 
 > [!IMPORTANT]
 > **플래그는 절대 자동 제출하지 않습니다.** 사이트 어댑터는 GET만 쓰고, jeopardy 에이전트는 사이트에 접근하지 않습니다.
@@ -225,9 +225,9 @@ tmux attach -t MyCTF2026-pwn       # -web -rev -crypto -ai -misc -koth
 | | |
 |---|---|
 | 대기 순서 | 모든 문제보다 먼저 (초반 라운드 점수 확보가 핵심) |
-| 모델 | 라운드 4까지 `gpt-6.2-astra`(codex, fast) → 이후 `claude-mythos-5-2`(막히면 `claude-opus-5-5`). 사용량 한도나 안전 차단이 보이면 자동으로 다음 모델로 전환 |
-| 메인 전환 | 라운드 4가 시작되면 Mythos 5.2(high)가 옆 pane에서 Astra의 작업을 확인하며 인수 준비 → 준비가 끝나면 관리 세션이 전환하고 Astra 세션 종료 |
-| fast | Astra는 메인을 맡는 라운드 4까지 `/fast` 켬 (에이전트가 보고한 라운드 기준) |
+| 모델 | 초반 `gpt-6.2-astra`(codex, fast) → 라운드 4부터 `claude-mythos-5-2`(막히면 `claude-opus-5-5`). 사용량 한도나 안전 차단이 보이면 자동으로 다음 모델로 전환 |
+| 메인 전환 | 라운드 3부터 Mythos 5.2(high)가 옆 pane에서 Astra의 작업을 파악하며 다음 전략을 준비 → 라운드 4를 목표로 관리 세션이 전환하고 Astra 세션 종료 (준비가 덜 됐으면 그 뒤 라운드) |
+| fast | Astra는 메인인 동안 라운드 4까지 `/fast` 켬 (에이전트가 보고한 라운드 기준) |
 | 사이트 접근 | 문제 디렉토리의 `CTF_ACCESS.env`(권한 600)로 그 문제의 라운드·점수판 조회 위임 |
 | 라운드 요약 | 라운드가 바뀔 때마다 직전 결과, 제출한 후보, 이번 계획을 Discord의 그 문제 포스트로 전송 |
 | 경쟁형 문제 | 다른 팀과 겨루는 문제면 메인이 Claude로 전환된 뒤부터 상대 전략을 분석하는 subagent를 병렬로 돌려 대응 방안을 후보에 반영 |

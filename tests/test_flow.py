@@ -423,6 +423,10 @@ class Flow(unittest.TestCase):
         self.assertIn("fast 켬", self.store.events_path.read_text())
         self.assertIn("/fast", tmux.capture(hill["window_id"], 40))
 
+        self.run_cli("report", "round", "--round", "3", "--summary", "R2 3위", cwd=chal)
+        hill = watch_until(lambda c: c.get("peer"))  # 라운드 3: 후임을 미리 띄운다. fast는 라운드 4까지 유지
+        self.assertEqual(hill["peer"]["role"], "successor")
+        self.assertNotIn("fast 끔", self.store.events_path.read_text())
         self.run_cli("report", "round", "--round", "5", "--summary", "R4 2위(+120)\nR5: 탐색 깊이 3으로 제출 예정", cwd=chal)
         self.assertIn("라운드 5\nR4 2위(+120)", self.mock.webhook[-1])  # 라운드마다 진행 요약이 그 문제의 포스트로 간다
         self.assertEqual([t["name"] for t in self.mock.threads.values()], ["[koth] Hill Climb"])
@@ -436,7 +440,7 @@ class Flow(unittest.TestCase):
         hill = watch_until(lambda c: c.get("fast_sent") and c.get("peer"))
         self.assertIn("fast 끔 (라운드 5", self.store.events_path.read_text())
 
-        # 전환 준비: fast_rounds(4) 라운드부터 체인의 다음 모델을 후임으로 오른쪽 pane에 띄운다
+        # 전환 준비: 체인의 다음 모델이 후임으로 오른쪽 pane에 떠 있다
         peer = hill["peer"]
         self.assertEqual((peer["agent"], peer["model"], peer["effort"], peer["role"]), ("claude", "claude-mythos-5-2", "high", "successor"))
         self.assertEqual(self.pane_count("Hill Climb"), 2)

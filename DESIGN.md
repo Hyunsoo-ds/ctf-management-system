@@ -324,9 +324,9 @@ download(cfg, file, dest)
   - `ctfm report round`에 `--summary`(필수)를 추가해 라운드마다 진행 요약을 그 문제의 포스트로 보낸다.
   - `KOTH_STRATEGY.md` 7.5: 다른 팀의 제출물에 따라 점수가 달라지는 문제면 메인이 claude로 전환된 뒤부터(초반 codex 세션은 점수 확보에만 집중, 사용자 결정) 메인은 기존 전략을 계속하고, 상대 전략 분석과 대응 방안 수립을 맡는 subagent 하나를 병렬로 돌린다(산출물 `OPPONENTS.md`, 제출과 후보 수정은 하지 않음). `[?]` codex(Astra)가 하위 에이전트를 실제로 띄우는지는 확인하지 못했다. 못 쓰면 메인이 직접 분석하도록 적어 두었다.
 - **KotH 메인 전환** (2026-11-27, 사용자 결정: codex 사용량이 claude보다 적어 Astra를 오래 쓸 수 없음):
-  - Astra(fast)가 라운드 4까지 메인, 이후 Mythos 5.2(effort high, 막히면 Opus 5.5). 체인 첫 항목의 `fast_rounds`(4)가 "초반 모델이 맡는 마지막 라운드"이고, 체인 항목에 `effort`를 둘 수 있다.
-  - 보고된 라운드가 `fast_rounds` 이상이 되면(= 라운드 3이 끝나 4를 준비하는 동안) 데몬이 체인의 다음 항목을 **후임**으로 메인의 오른쪽 pane에 띄운다(`SUCCESSOR`). 동시 풀이의 `peer` 구조를 그대로 쓰고 `role=successor`로 구분한다. 후임은 AGENTS_KOTH.md 8번에 따라 제출 없이 Astra의 작업을 확인하고 `HANDOVER.md`를 쓴 뒤 `ctfm report ready`로 알린다(`READY`, Discord).
-  - 전환은 관리 세션이 `ctfm handover X`로 한다: Astra pane 종료, 후임 기록을 메인으로 올림, 후임에게 전환 메시지(현재 라운드 확인과 보고, 미제출이면 제출, 경쟁형이면 상대 분석 subagent 시작). 언제 전환할지(Astra의 라운드 4 제출 뒤, 준비가 늦으면 그 뒤 라운드)는 화면을 봐야 알 수 있어 데몬이 아니라 관리 세션이 판단한다.
+  - Astra(fast)가 초반 메인, 라운드 4부터 Mythos 5.2(effort high, 막히면 Opus 5.5)가 맡는 것이 목표. 체인 첫 항목의 `successor_round`(3)가 후임을 띄우는 라운드, `fast_rounds`(4)는 전환이 늦어져도 Astra가 fast를 유지하는 마지막 라운드다. 체인 항목에 `effort`를 둘 수 있다.
+  - 보고된 라운드가 `successor_round` 이상이 되면(라운드 3 동안 미리 준비시킨다) 데몬이 체인의 다음 항목을 **후임**으로 메인의 오른쪽 pane에 띄운다(`SUCCESSOR`). 동시 풀이의 `peer` 구조를 그대로 쓰고 `role=successor`로 구분한다. 후임은 AGENTS_KOTH.md 8번에 따라 제출 없이 Astra의 작업을 확인하고 `HANDOVER.md`를 쓴 뒤 `ctfm report ready`로 알린다(`READY`, Discord).
+  - 전환은 관리 세션이 `ctfm handover X`로 한다: Astra pane 종료, 후임 기록을 메인으로 올림, 후임에게 전환 메시지(현재 라운드 확인과 보고, 미제출이면 제출, 경쟁형이면 상대 분석 subagent 시작). 언제 전환할지(목표는 Astra의 라운드 3 제출 뒤 라운드 4 시작 시점, 준비가 늦으면 그 뒤 라운드)는 화면을 봐야 알 수 있어 데몬이 아니라 관리 세션이 판단한다.
   - Stop hook: 후임은 `ready` 전에는 준비를 계속하라는 문구로 차단하고, `ready` 뒤에는 전환을 기다리며 멈추게 둔다. 유휴 재개 메시지는 후임에게 넣지 않는다.
   - 모델 사용 불가 감지는 pane별이다. 메인(Astra)이 막혔는데 후임이 있으면 후임에게 바로 넘기고, 후임이 막히면 후임 pane만 체인의 다음 모델로 다시 띄운다.
   - `ctfm report`를 부른 쪽은 `CTFM_AGENT`가 가리키는 에이전트의 pane, 없으면 codex pane으로 찾는다(메인이 codex이고 후임이 claude인 배치에도 맞게 일반화).
