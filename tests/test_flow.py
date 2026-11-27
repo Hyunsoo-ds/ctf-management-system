@@ -355,6 +355,22 @@ class Flow(unittest.TestCase):
         self.assertNotIn("pwn_TESTCTF:easy_one", self.windows())
         self.assertIn("강제 종료", self.store.events_path.read_text())
 
+    def test_forum_tags(self):
+        """포럼 포스트를 만들 때 분야 태그를 붙인다. 태그가 필수인 포럼에서 태그 설정이 없으면 원인을 남긴다."""
+        self.mock.require_tag = True
+        self.poll()
+        easy, wanted = self.chal_dir("easy one"), self.chal_dir("wanted")
+        self.run_cli("report", "ask", "--question", "태그 없이", cwd=wanted)
+        self.assertEqual(self.mock.threads, {})
+        self.assertIn("A tag is required", self.store.events_path.read_text())
+
+        state.write_env(self.root, {"DISCORD_FORUM_TAGS": "pwn:111, crypto:222,misc:333"})
+        self.run_cli("report", "ask", "--question", "토큰 필요", cwd=wanted)
+        self.run_cli("report", "ask", "--question", "원격 다운", cwd=easy)
+        self.run_cli("notify", "공지")
+        self.assertEqual({t["name"]: t["tags"] for t in self.mock.threads.values()},
+                         {"[crypto] wanted": ["222"], "[pwn] easy one": ["111"], "TESTCTF": ["333"]})
+
     def test_effort_escalation(self):
         """재검토 2회째: claude가 멈춰 유휴가 되면 /effort max → /compact → 엄밀한 재검토 지시."""
         with self.store.locked() as (cfg, st):

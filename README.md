@@ -130,7 +130,7 @@ cd ~/ctf-management-system
 | 1/6 의존성 확인 | python3(안전한 tar 해제 지원 여부까지), tmux, claude, 7z, insane-codex |
 | 2/6 풀이용 스킬 | `solve-challenge`, `ctf-*` 스킬이 없으면 `npx skills add ljagiello/ctf-skills -g` 실행을 제안 |
 | 3/6 스킬 등록 | `~/.claude/skills/setup-ctf` → 저장소의 `setup-ctf/` 심볼릭 링크 |
-| 4/6 Discord | **포럼 채널**의 webhook URL을 받아 저장소 `.env`에 저장 (권한 600). 일반 텍스트 채널 webhook은 포스트를 만들 수 없어 쓸 수 없습니다 |
+| 4/6 Discord | **포럼 채널**의 webhook URL을 받아 저장소 `.env`에 저장 (권한 600). 일반 텍스트 채널 webhook은 포스트를 만들 수 없어 쓸 수 없습니다. 포럼에 분야 태그를 만들어 두었다면 `.env`에 `DISCORD_FORUM_TAGS=pwn:<태그 ID>,web:<태그 ID>,...`를 추가하면 포스트에 태그가 붙습니다 |
 | 5/6 권한 확인 창 | `~/.claude/settings.json`에 `skipDangerousModePermissionPrompt: true` 추가 제안 |
 | 6/6 테스트 | mock CTFd와 격리된 tmux 서버로 전체 흐름 테스트 (약 15초) |
 

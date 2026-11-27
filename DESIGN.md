@@ -345,6 +345,9 @@ download(cfg, file, dest)
   - 3단계 막힘 규칙과의 관계: 1번째(재검토)와 3번째(BLOCKED 알림)는 에이전트가 실행하는 명령이라 영향이 없다. 2번째(effort 상향)는 에이전트가 멈춰야 데몬이 `/effort max`, `/compact`를 넣을 수 있는데, 목표가 남아 있어 바로 멈추지 못하고 위의 일시 정지까지 짧은 턴이 이어진 뒤 진행된다. 목표는 compact 뒤에도 남아 재검토 지시 메시지로 다시 이어진다. 질문(`ask`) 대기와 후임의 전환 대기도 같은 방식으로 멈춘다.
   - `ctfm hook stop`은 아무것도 하지 않는 명령으로 남겼다(예전 문제 디렉토리의 Stop hook 설정이 오류로 턴을 막지 않게). UserPromptSubmit hook(`hook prompt`)은 그대로 쓴다.
   - `[?]` 판정 모델이 "Impossible"로 판정하면 목표가 해제된다(문서). 그 뒤에는 유휴 재개 메시지만 남는다. `[?]` codex의 목표가 resume(`codex resume --last`) 뒤에도 남는지는 확인하지 못해, resume 때도 `/goal`을 다시 준다. `[?]` codex 목표 문장 안의 `$solve-challenge`가 스킬을 실제로 불러오는지 미확인.
+- **포럼 포스트 태그** (2026-11-27, 사용자 결정: 분야 태그로 관리): 포스트를 만들 때 `applied_tags`에 그 문제 분야의 태그 ID를 넣는다. 공통 포스트는 `misc` 태그를 쓴다. 태그 ID는 `.env`의 `DISCORD_FORUM_TAGS=pwn:<ID>,web:<ID>,...`로 받는다.
+  - 확인한 것: `applied_tags`는 태그 이름이 아니라 ID만 받는다(문서). webhook 조회(`GET` webhook URL)는 `channel_id`까지만 주고 태그 목록은 주지 않으므로, ID는 봇 토큰으로 `GET /channels/<channel_id>`의 `available_tags`를 읽거나 사용자가 알려 줘야 한다. 포럼이 태그를 필수로 요구하면 태그 없는(또는 틀린 ID의) 생성 요청은 400 `A tag is required to create a forum post in this channel`(40067)로 거부된다.
+  - 이미 만들어진 포스트에는 태그를 나중에 붙일 수 없다(webhook에는 포스트 수정 권한이 없다).
 
 ## 12. 테스트
 
