@@ -3,7 +3,7 @@
 
     python3 rehearsal/serve.py            # 문제를 빌드하고 서비스를 띄운다 (Ctrl+C로 종료)
 
-- 문제 사이트: http://127.0.0.1:8000  (CTFd API, 토큰 `testtoken`)
+- 문제 사이트: http://127.0.0.1:8000  (브라우저 화면 + CTFd API, 토큰 `testtoken`)
 - pwn 원격:    nc 127.0.0.1 31337
 - web 원격:    http://127.0.0.1:8081
 빌드 산출물은 rehearsal/.build/ 에 만든다. 원격의 진짜 플래그는 배포 파일에 들어가지 않는다.
@@ -276,12 +276,13 @@ def main():
              description="플래그만 FLAG로 판정하도록 학습시킨 모델입니다. 모델이 FLAG라고 답하는 입력을 찾으세요. (원격 서버 없음)")
     mock.add(6, "layers", "Misc", value=50, solves=30, flag=FLAGS["misc"], files={"layers.txt": dist["misc"]["layers.txt"][0]},
              description="누가 플래그를 여러 겹으로 싸 놓았습니다. (원격 서버 없음)")
+    mock.pages["/"] = mock.pages["/challenges"] = (HERE / "index.html").read_text().replace("__TOKEN__", TOKEN).encode()
     site = mock.start(SITE_PORT)
 
     pwn = PwnServer((HOST, PWN_PORT), PwnHandler)
     threading.Thread(target=pwn.serve_forever, daemon=True).start()
     web = subprocess.Popen([sys.executable, "app.py", str(WEB_PORT)], cwd=BUILD / "web", env={"FLAG": FLAGS["web"], "PATH": "/usr/bin:/bin"})
-    print(f"문제 사이트  {site}   (토큰: {TOKEN})\npwn 원격     nc {HOST} {PWN_PORT}\nweb 원격     http://{HOST}:{WEB_PORT}/", flush=True)
+    print(f"문제 사이트  {site}   (브라우저로 열 수 있음, 토큰: {TOKEN})\npwn 원격     nc {HOST} {PWN_PORT}\nweb 원격     http://{HOST}:{WEB_PORT}/", flush=True)
     print(f"\n관리 세션 시작:  /setup-ctf {site} --token {TOKEN}\n제출 기록은 아래에 찍힌다. Ctrl+C로 종료.", flush=True)
     seen = 0
     try:

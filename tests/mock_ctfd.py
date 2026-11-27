@@ -42,6 +42,7 @@ class MockCTFd:
         self.webhook = []     # Discord로 전송된 content 목록
         self.threads = {}     # 포럼 포스트: thread_id -> {"name", "messages"}
         self.writes = []      # webhook과 플래그 제출 외의 쓰기 요청 (있으면 안 됨)
+        self.pages = {}       # 인증 없이 보여 줄 HTML 페이지: 경로 -> bytes (리허설용 화면)
         self.attempts = []    # 플래그 제출: (challenge_id, flag). 정답은 문제의 flag (기본 flag{real})
         self.server = None
 
@@ -71,6 +72,8 @@ class MockCTFd:
                 if path.startswith("/files/"):
                     _, _, cid, name = path.split("/", 3)
                     return self.reply(200, mock.challenges[int(cid)]["files"][name], "application/octet-stream")
+                if path in mock.pages:
+                    return self.reply(200, mock.pages[path], "text/html; charset=utf-8")
                 if self.headers.get("Authorization") != f"Token {TOKEN}":
                     return self.reply(401, {"message": "unauthorized"})
                 if path == "/api/v1/users/me":
