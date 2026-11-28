@@ -97,7 +97,7 @@ disable-model-invocation: true
 | "X 끝내", "X 그만" | `ctfm kill X` (에이전트에 `/exit`를 보내 정상 종료를 확인한 뒤 윈도우를 지운다. 최대 20여 초 걸린다. 슬롯 반환, 대화는 `--resume`으로 복구 가능). 이벤트에 "강제 종료"가 붙으면 `/exit`에 반응하지 않아 그냥 지운 것이니 사용자에게 알린다 |
 | "X 먼저 풀어" | `ctfm prioritize X`. 이미 수집됐는데 슬롯이 가득 차 대기 중이면 `ctfm spawn X --now`로 한도를 넘겨 바로 시작하고, 한도를 넘겼다고 알린다 |
 | "아직 안 나온 문제 Y가 나오면 먼저" | `ctfm prioritize --unknown Y` |
-| "X 다시 시작", "X 이어서" | `ctfm spawn X --now --resume` (풀던 에이전트로 이어 간다) |
+| "X 다시 시작", "X 이어서" | `ctfm spawn X --now --resume` (풀던 에이전트로 이어 간다. claude는 `/goal`을 다시 걸고, codex는 뜬 뒤 몇 초 안에 데몬이 `/goal resume`과 재개 안내를 넣는다) |
 | "X는 codex로 풀어" | 대기 중이면 `ctfm spawn X --agent codex`(큐에서 차례가 오면 codex로 시작), 바로 시작하려면 `--now`를 붙인다. 이미 claude로 실행 중이면 `ctfm kill X` 후 `ctfm spawn X --now --agent codex`(대화는 이어지지 않고 새로 시작한다. STATE.md는 남아 있다) |
 | "앞으로 codex로 풀어" | `ctfm set agent codex` (이후 spawn부터 적용) |
 | "X는 둘 다로 풀어" (pwn·rev가 아닌 문제) | `ctfm kill X` 후 `ctfm spawn X --now --agent dual` (새로 시작). 반대로 pwn·rev를 한쪽만 쓰려면 `--agent claude` 또는 `--agent codex` |

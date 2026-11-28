@@ -468,6 +468,34 @@ class Flow(unittest.TestCase):
             time.sleep(0.3)
         self.assertGreaterEqual(resumes(ch["peer"]), before + 2)
 
+    def test_codex_resume(self):
+        """codex를 재개할 때는 /goal을 다시 넣지 않는다: 인자 없이 띄우고 화면이 뜨면 /goal resume과 재개 안내를 넣는다."""
+        footer = "sh -c 'echo \"GPT-6-Sol medium fast ·\"; exec sleep 600' agent"
+        with self.store.locked() as (cfg, st):
+            cfg.update(idle_nudge=0, max_agents=1, priority=["easy one"], exit_wait=0, agent_cmd=footer)
+        self.poll()
+        launch = self.root / ".ctfm" / "launch"
+        self.assertIn(".codex.prompt", (launch / "pwn-easy_one.codex.sh").read_text())  # 처음에는 /goal 프롬프트를 인자로 준다
+        self.run_cli("kill", "easy one")
+        self.run_cli("spawn", "easy one", "--now", "--resume")
+        self.assertNotIn(".prompt", (launch / "pwn-easy_one.codex.sh").read_text())
+        self.assertIn("/goal", (launch / "pwn-easy_one.claude.prompt").read_text())  # claude는 다시 넣은 /goal이 목표를 새로 건다
+        self.assertIn("중단됐던 작업", (launch / "pwn-easy_one.claude.prompt").read_text())
+
+        ch = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            daemon.housekeep(self.store)
+            ch = next(c for c in self.store.state()["challenges"].values() if c["name"] == "easy one")
+            if "resume_note" not in ch["peer"]:
+                break
+            time.sleep(0.5)
+        self.assertNotIn("resume_note", ch["peer"])
+        screen = tmux.capture(ch["peer"]["pane"], 60).replace("\n", "")
+        self.assertLess(screen.index("/goal resume"), screen.index("중단됐던 작업"))
+        self.assertIn("STATE.codex.md", screen)
+        self.assertNotIn("/goal resume", tmux.capture(ch["pane"], 60))
+
     def test_dual_exit(self):
         """동시 풀이는 한쪽이 끝나도 슬롯을 유지하고, 둘 다 끝나야 exited가 된다."""
         with self.store.locked() as (cfg, st):

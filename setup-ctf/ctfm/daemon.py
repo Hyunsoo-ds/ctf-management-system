@@ -130,17 +130,24 @@ def launch_script(store, cfg, ch, p, resume):
     exit_file = launch / f"{key}.{int(time.time() * 1000)}.exit"
     koth = ch["category"] == "koth"
     goal = GOAL_SUCCESSOR if p.get("role") == "successor" else GOAL_KOTH if koth else GOAL
-    prompt = goal.format(skill=SKILL_CALL[agent], category=ch["category"]) + (RESUME_NOTE if resume else "")
+    note = RESUME_NOTE if resume else ""
     if ch.get("peer") and not koth:
-        prompt += DUAL_PROMPT.format(agent=agent, other="claude" if agent == "codex" else "codex")
-    prompt_file.write_text(prompt)
+        note += DUAL_PROMPT.format(agent=agent, other="claude" if agent == "codex" else "codex")
+    # codex는 resume할 때 인자로 준 `/goal ...`을 명령이 아니라 일반 메시지로 받아, 이전 목표가 멈춘 채 남는다(DESIGN.md 11절).
+    # 그래서 인자 없이 띄우고, 화면이 뜨면 데몬이 `/goal resume`과 재개 안내를 넣는다(watch). claude는 다시 넣은 /goal이 목표를 새로 건다.
+    p.pop("resume_note", None)
+    if resume and agent == "codex":
+        p["resume_note"], prompt_arg = note.strip(), ""
+    else:
+        prompt_file.write_text(goal.format(skill=SKILL_CALL[agent], category=ch["category"]) + note)
+        prompt_arg = f' "$(cat {shlex.quote(str(prompt_file))})"'
     script.write_text(
         "#!/bin/sh\n"
         f"unset {' '.join(tmux.SESSION_VARS)}\n"
         f"export CTFM_AGENT={agent}\n"  # `ctfm report`가 동시 풀이에서 보고한 쪽을 구분한다 (codex 셸에는 전달되지 않는다)
         f"export PATH={shlex.quote(str(CTFM_BIN.parent))}:\"$PATH\"\n"  # 에이전트가 `ctfm report`로 부를 수 있게
         f"cd {shlex.quote(str(store.root / ch['dir']))} || exit 1\n"
-        f'{agent_command(store, cfg, ch, p, resume)} "$(cat {shlex.quote(str(prompt_file))})"\n'
+        f"{agent_command(store, cfg, ch, p, resume)}{prompt_arg}\n"
         f"echo $? > {shlex.quote(str(exit_file))}\n"
     )
     script.chmod(0o755)
@@ -373,7 +380,7 @@ def watch(store, cfg, ch, p, now):
     """실행 중인 에이전트 화면을 주기적으로 본다: KotH 모델 사용 불가, codex fast/effort, effort 상향, 입력 대기 멈춤.
     유휴 판정: 하단에 작업 중 표시가 없고 화면이 idle_nudge초 동안 그대로. 질문 대기와 사용자가 보는 창은 건드리지 않는다."""
     limit = int(cfg.get("idle_nudge", 120))
-    every = 3 if p.get("escalate") else min(CHECK_EVERY, limit or CHECK_EVERY)
+    every = 3 if p.get("escalate") or p.get("resume_note") else min(CHECK_EVERY, limit or CHECK_EVERY)
     if ch["status"] not in ("running", "blocked") or now - p.get("idle_checked", 0) < every:
         return
     p["idle_checked"] = now
@@ -390,6 +397,12 @@ def watch(store, cfg, ch, p, now):
         if p is ch and not ch.get("peer") and since and (ch.get("round") or 0) >= since:
             spawn_successor(store, cfg, ch, idx + 1)
             store.emit("SUCCESSOR", f"{label(ch)} 라운드 {ch['round']}: 후임 {describe(cfg, ch, ch['peer'])}를 오른쪽 pane에 띄워 인수 준비 시작")
+    if p.get("resume_note"):  # 재개한 codex: 화면이 뜨면 멈춘 채 복원된 목표를 다시 잇고 재개 안내를 넣는다
+        if CODEX_FOOTER.search(screen):
+            tmux.type_command(p["pane"], "/goal resume")  # 재개 직후에는 하단에 목표 상태가 보이지 않아 확인 없이 넣는다
+            time.sleep(1)
+            tmux.send_text(p["pane"], p.pop("resume_note"))
+        return
     sync_codex(store, cfg, ch, p, screen, now)
     if p.get("escalate"):
         escalate(store, ch, p, busy)

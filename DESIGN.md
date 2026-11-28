@@ -359,6 +359,12 @@ download(cfg, file, dest)
   - 확인한 동작 (insane-codex 0.170, 격리된 tmux): 멈추라는 안내를 받은 codex는 도구 없는 짧은 턴을 두세 번 거친 뒤 목표를 세워 두고 멈춘다(하단 `Goal paused (/goal resume)`, 목표를 blocked로 기록한 경우에는 `Goal stalled (/goal resume)`). 그 상태에서 effort max 전환(`Model changed to gpt-6-sol max for this session only`, config 불변), `/compact`(약 10초 동안 `esc to interrupt` 표시, `Context compacted`)가 됐다. compact 뒤에도 목표는 멈춘 채 남는다.
   - claude와 다른 점: 멈춘 목표는 메시지를 넣어도 다시 이어지지 않는다. 한 턴만 하고 멈춘다(확인). `/goal resume`을 넣으면 `Goal active`가 되고 이어서 넣은 지시를 수행한 뒤 계속 이어 간다(확인). 그래서 하단에 `(/goal resume)` 표시가 있을 때만 메시지 앞에 `/goal resume`을 넣는다(`daemon.tell`). 재검토 지시, 유휴 재개(`NUDGED`), `ctfm send`(질문 답변 전달 포함)가 모두 이 경로를 쓴다. 플래그를 얻었으니 멈추라는 상대 pane 안내에는 넣지 않는다.
   - `[?]` 목표가 이어지는 동안 턴과 턴 사이에 작업 중 표시가 1초쯤 사라진다. 3초 간격의 두 번 연속 유휴 판정이 그 틈에 걸리면 작업 중에 `/compact`를 넣게 된다. 턴 길이가 4초 이상이라 가능성은 낮다고 추정하지만 긴 실행으로 확인하지는 않았다.
+- **codex 재개 시 목표** (2026-11-28, 리허설에서 발견): `--resume`으로 다시 띄울 때 codex에도 `/goal ...` 프롬프트를 인자로 줬는데, 그 뒤 하단에 `Goal paused`/`Goal stalled`가 계속 남았다.
+  - 확인한 동작 (insane-codex 0.170): `insane-codex resume --last "<프롬프트>"`의 프롬프트는 슬래시 명령으로 해석되지 않고 일반 메시지로 들어간다(`/goal ...`과 `/goal resume` 모두). 처음 띄울 때는 명령으로 실행된다. 복원된 세션의 목표는 멈춘 채 남아 메시지 한 번에 한 턴만 진행한다. 재개 직후에는 하단에 목표 상태가 아예 표시되지 않고, 한 턴이 지나야 `Goal stalled (/goal resume)`이 보인다. 이 상태에서 입력창에 `/goal resume`을 넣고 메시지를 넣으면 목표가 다시 이어진다. 입력창에 `/goal <새 목표>`를 넣으면 "Replace current goal / Cancel" 확인 창이 뜬다.
+  - 그래서 codex를 재개할 때는 인자 없이 띄우고 pane에 `resume_note`(재개 안내, 동시 풀이 안내 포함)를 기록한다. 데몬이 3초 간격으로 보다가 하단 표시(`GPT-... ·`)가 보이면 `/goal resume` → 재개 안내 순으로 넣는다. 그 전까지는 fast/effort 맞춤과 유휴 재개를 하지 않는다.
+  - claude는 그대로다: `claude --continue "/goal ..."`은 `Goal set`으로 목표를 새로 걸고 `/goal active`가 된다(확인, Claude Code 2.1.332).
+  - `[?]` 복원된 세션에 목표가 없거나 이미 진행 중일 때 `/goal resume`이 무엇을 출력하는지는 확인하지 않았다. 무해한 안내로 추정한다.
+  - `[?]` KotH 전환(`promote`)은 후임 pane에 `/goal ...`을 키 입력으로 넣는다. 후임이 codex인 체인이면 위의 교체 확인 창에서 멈춘다. 기본 체인의 후임은 claude라 해당하지 않는다.
 
 ## 12. 테스트
 
